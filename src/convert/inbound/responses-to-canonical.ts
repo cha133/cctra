@@ -4,6 +4,7 @@
 // 跳过：5 个内置工具（web_search/code_interpreter/file_search/mcp/computer_use）
 // ============================================================================
 import type { CanonicalRequest, CanonicalMessage, CanonicalContentBlock, CanonicalTool } from "../../canonical/types";
+import { splitKnownAndExtras } from "../common/extras";
 
 interface ResponsesRequest {
   model?: string;
@@ -56,7 +57,15 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
           }
         }
       }
-      messages.push({ role, content: blocks });
+      // extras：未识别字段塞 openaiResponses 桶
+      const knownMsgKeys = new Set(["role", "content"]);
+      const { known: _k, extras } = splitKnownAndExtras(m as unknown as Record<string, unknown>, knownMsgKeys, "openaiResponses");
+      void _k;
+      messages.push({
+        role,
+        content: blocks,
+        ...(Object.keys(extras).length > 0 ? { extras } : {}),
+      });
     }
   }
 

@@ -3,6 +3,7 @@
 // ============================================================================
 import type { CanonicalRequest, CanonicalContentBlock, ImageSource } from "../../canonical/types";
 import { systemToString } from "../common/system-prompt";
+import { mergeExtras } from "../common/extras";
 
 type ChatContentPart =
   | { type: "text"; text: string }
@@ -79,7 +80,9 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
           },
         }));
       }
-      messages.push(msg);
+      // 透传 assistant message 级别 extras（openaiChat 桶）
+      const merged = mergeExtras(msg as unknown as Record<string, unknown>, m.extras, "openaiChat");
+      messages.push(merged as unknown as ChatUpstreamRequest["messages"][number]);
     }
   }
 

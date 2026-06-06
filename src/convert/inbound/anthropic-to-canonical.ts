@@ -3,6 +3,7 @@
 // Anthropic 格式跟 Canonical 几乎一样，主要是字段名 / 类型微调
 // ============================================================================
 import type { CanonicalRequest, CanonicalMessage, CanonicalContentBlock, CanonicalTool } from "../../canonical/types";
+import { splitKnownAndExtras } from "../common/extras";
 
 interface AnthropicRequest {
   model?: string;
@@ -32,10 +33,15 @@ type AnthropicContentBlock =
   | { type: "thinking"; thinking: string; signature?: string };
 
 export function anthropicToCanonical(req: AnthropicRequest): CanonicalRequest {
-  const messages: CanonicalMessage[] = (req.messages ?? []).map((m) => ({
-    role: m.role,
-    content: messageContentToBlocks(m.content),
-  }));
+  const messages: CanonicalMessage[] = (req.messages ?? []).map((m) => {
+    const knownMsgKeys: ReadonlySet<keyof typeof m> = new Set(["role", "content"]);
+    const { known, extras } = splitKnownAndExtras(m as unknown as Record<string, unknown>, knownMsgKeys as ReadonlySet<keyof Record<string, unknown>>, "anthropic");
+    return {
+      ...(known as { role: "user" | "assistant" }),
+      content: messageContentToBlocks(m.content),
+      ...(Object.keys(extras).length > 0 ? { extras } : {}),
+    };
+  });
 
   const tools: CanonicalTool[] | undefined = req.tools?.map((t) => ({
     name: t.name,

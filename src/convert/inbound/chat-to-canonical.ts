@@ -2,6 +2,7 @@
 // OpenAI Chat Completions → Canonical
 // ============================================================================
 import type { CanonicalRequest, CanonicalMessage, CanonicalContentBlock, CanonicalTool } from "../../canonical/types";
+import { splitKnownAndExtras } from "../common/extras";
 
 // OpenAI Chat Completions 的请求格式（我们只关心字段，不严格类型化）
 type ChatContentPart = { type: string; text?: string; image_url?: { url: string } };
@@ -77,7 +78,15 @@ export function chatToCanonical(req: ChatRequest): CanonicalRequest {
           blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
         }
       }
-      messages.push({ role: "assistant", content: blocks });
+      // extras：把原始 m 整体塞 openaiChat 桶
+      const knownMsgKeys = new Set(["role", "content", "tool_calls"]);
+      const { known: _k, extras } = splitKnownAndExtras(m as unknown as Record<string, unknown>, knownMsgKeys, "openaiChat");
+      void _k;
+      messages.push({
+        role: "assistant",
+        content: blocks,
+        ...(Object.keys(extras).length > 0 ? { extras } : {}),
+      });
       continue;
     }
   }

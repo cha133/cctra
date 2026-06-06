@@ -7,6 +7,20 @@ export type ApiFormat = "openai-chat" | "openai-responses" | "anthropic-messages
 
 export type StopReason = "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | "error";
 
+// ---------- Per-protocol extras（透传未识别字段） ----------
+
+/**
+ * 按协议分类的「未识别字段」桶。
+ * - inbound 时把协议原请求中未识别的字段塞进对应协议桶
+ * - outbound 时按目标协议把对应桶 spread 进结果对象
+ * 例：anthropic → canonical → anthropic 链路里 cache_control 字段不会丢失
+ */
+export interface ProtocolExtras {
+  anthropic?: Record<string, unknown>;
+  openaiChat?: Record<string, unknown>;
+  openaiResponses?: Record<string, unknown>;
+}
+
 // ---------- Request ----------
 
 export interface CanonicalRequest {
@@ -24,21 +38,25 @@ export interface CanonicalRequest {
   previousResponseId?: string;
   // 思考强度（OpenAI Responses `reasoning.effort` / Anthropic `thinking.budget_tokens` 的统一抽象）
   reasoning?: { effort?: "low" | "medium" | "high" };
+  // 透传未识别字段（按协议分类）
+  extras?: ProtocolExtras;
 }
 
 export interface CanonicalMessage {
   role: "user" | "assistant";
   content: CanonicalContentBlock[];
+  extras?: ProtocolExtras;
 }
 
-export type CanonicalContentBlock =
+export type CanonicalContentBlock = (
   | { type: "text"; text: string }
   | { type: "image"; source: ImageSource }
   | { type: "document"; source: DocumentSource }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; toolUseId: string; content: string | CanonicalContentBlock[]; isError?: boolean }
   | { type: "thinking"; thinking: string; signature?: string }
-  | { type: "refusal"; refusal: string };
+  | { type: "refusal"; refusal: string }
+) & { extras?: ProtocolExtras };
 
 export interface ImageSource {
   kind: "url" | "base64";

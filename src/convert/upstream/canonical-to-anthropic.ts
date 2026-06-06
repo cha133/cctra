@@ -2,6 +2,7 @@
 // Canonical → Anthropic Messages 请求（发给 Anthropic 上游用）
 // ============================================================================
 import type { CanonicalRequest, CanonicalContentBlock } from "../../canonical/types";
+import { mergeExtras } from "../common/extras";
 
 interface AnthropicUpstreamRequest {
   model: string;
@@ -29,12 +30,17 @@ type AnthropicContentBlock =
   | { type: "thinking"; thinking: string; signature?: string };
 
 export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUpstreamRequest {
-  const messages: AnthropicUpstreamRequest["messages"] = req.messages.map((m) => ({
-    role: m.role,
-    content: m.content.length === 1 && m.content[0]?.type === "text"
+  const messages: AnthropicUpstreamRequest["messages"] = req.messages.map((m) => {
+    const msgContent = m.content.length === 1 && m.content[0]?.type === "text"
       ? m.content[0].text
-      : m.content.map(blockToAnthropic),
-  }));
+      : m.content.map(blockToAnthropic);
+    return {
+      role: m.role,
+      content: msgContent,
+      // 透传 message 级别未识别字段
+      ...(m.extras?.anthropic ?? {}),
+    };
+  });
 
   let system: string | undefined;
   if (typeof req.system === "string") system = req.system;
@@ -65,31 +71,41 @@ function effortToBudget(effort: "low" | "medium" | "high"): number {
 function blockToAnthropic(b: CanonicalContentBlock): AnthropicContentBlock {
   switch (b.type) {
     case "text":
-      return { type: "text", text: b.text };
+      return mergeExtras({ type: "text", text: b.text } as AnthropicContentBlock, b.extras, "anthropic");
     case "image": {
       const src = b.source;
-      if (src.kind === "base64") return { type: "image", source: { type: "base64", media_type: src.mediaType, data: src.data } };
-      return { type: "image", source: { type: "url", media_type: src.mediaType, url: src.data } };
+      const built: AnthropicContentBlock = src.kind === "base64"
+        ? { type: "image", source: { type: "base64", media_type: src.mediaType, data: src.data } }
+        : { type: "image", source: { type: "url", media_type: src.mediaType, url: src.data } };
+      return mergeExtras(built, b.extras, "anthropic");
     }
     case "document": {
       const src = b.source;
-      if (src.kind === "base64") return { type: "document", source: { type: "base64", media_type: src.mediaType, data: src.data } };
-      return { type: "document", source: { type: "url", media_type: src.mediaType, url: src.data } };
+      const built: AnthropicContentBlock = src.kind === "base64"
+        ? { type: "document", source: { type: "base64", media_type: src.mediaType, data: src.data } }
+        : { type: "document", source: { type: "url", media_type: src.mediaType, url: src.data } };
+      return mergeExtras(built, b.extras, "anthropic");
     }
-    case "tool_use":
-      return { type: "tool_use", id: b.id, name: b.name, input: b.input };
-    case "tool_result":
-      return {
+    case "tool_use": {
+      const built: AnthropicContentBlock = { type: "tool_use", id: b.id, name: b.name, input: b.input };
+      return mergeExtras(built, b.extras, "anthropic");
+    }
+    case "tool_result": {
+      const built: AnthropicContentBlock = {
         type: "tool_result",
         tool_use_id: b.toolUseId,
         content: typeof b.content === "string" ? b.content : b.content.map((cb) => cb.type === "text" ? cb.text : "").join(""),
         is_error: b.isError,
       };
-    case "thinking":
-      // 原生 thinking block + 透传 signature（如果有）
-      return { type: "thinking", thinking: b.thinking, ...(b.signature ? { signature: b.signature } : {}) };
+      return mergeExtras(built, b.extras, "anthropic");
+    }
+    case "thinking": {
+      // 原生 thinking block + 透传 signature（如果有）+ extras
+      const built: AnthropicContentBlock = { type: "thinking", thinking: b.thinking, ...(b.signature ? { signature: b.signature } : {}) };
+      return mergeExtras(built, b.extras, "anthropic");
+    }
     case "refusal":
       // Anthropic 无 refusal block；降级为加前缀的 text
-      return { type: "text", text: `[refusal] ${b.refusal}` };
+      return mergeExtras({ type: "text", text: `[refusal] ${b.refusal}` } as AnthropicContentBlock, b.extras, "anthropic");
   }
 }
