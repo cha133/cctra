@@ -6,8 +6,10 @@ import type { Source, Subscription, ApiFormat } from "../types";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk } from "../canonical/types";
 import { canonicalToChatUpstream } from "../convert/upstream/canonical-to-chat";
 import { canonicalToAnthropicUpstream } from "../convert/upstream/canonical-to-anthropic";
+import { canonicalToResponses } from "../convert/upstream/canonical-to-responses";
 import { parseChatUpstreamResponse } from "./chat-parser";
 import { parseAnthropicUpstreamResponse } from "./anthropic-parser";
+import { parseResponsesResponse } from "./responses-parser";
 import { pickInboundStreamParser, type InboundStreamParser } from "../convert/streaming/inbound/pick";
 import { ChatStreamFormatter } from "../convert/streaming/outbound/format-chat";
 import { ResponsesStreamFormatter } from "../convert/streaming/outbound/format-responses";
@@ -30,9 +32,7 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
     return makeError(opts.route.upstreamModelId, "plugin_returned_no_config");
   }
 
-  const upstreamBody = ready.apiFormat === "anthropic-messages"
-    ? canonicalToAnthropicUpstream(opts.canonical)
-    : canonicalToChatUpstream(opts.canonical);
+  const upstreamBody = pickUpstreamSerializer(ready.apiFormat)(opts.canonical);
 
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
@@ -57,9 +57,7 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
   }
 
   const raw = await res.json();
-  return ready.apiFormat === "anthropic-messages"
-    ? parseAnthropicUpstreamResponse(raw, opts.route.upstreamModelId)
-    : parseChatUpstreamResponse(raw, opts.route.upstreamModelId);
+  return pickUpstreamParser(ready.apiFormat)(raw, opts.route.upstreamModelId);
 }
 
 /** 流式上游调用 */
@@ -75,9 +73,7 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
   const ready = await resolveUpstream(opts.route);
   if (!ready) throw new Error("plugin_returned_no_config");
 
-  const upstreamBody = ready.apiFormat === "anthropic-messages"
-    ? canonicalToAnthropicUpstream(opts.canonical)
-    : canonicalToChatUpstream(opts.canonical);
+  const upstreamBody = pickUpstreamSerializer(ready.apiFormat)(opts.canonical);
 
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream:stream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
@@ -125,9 +121,7 @@ async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<Rea
   const source = route.source;
   if (source.kind === "subscription") {
     const sub = source as Subscription;
-    const path = sub.apiFormat === "anthropic-messages"
-      ? (sub.messagesPath ?? "/v1/messages")
-      : (sub.chatCompletionsPath ?? "/v1/chat/completions");
+    const path = pickUpstreamPath(sub);
     return {
       baseUrl: sub.endpoint,
       path,
@@ -177,4 +171,35 @@ function joinUrl(base: string, path: string): string {
   if (b.endsWith("/v1") && p.startsWith("/v1/")) return `${b}${p.slice(3)}`;
   if (b.endsWith("/v1beta") && p.startsWith("/v1beta/")) return `${b}${p.slice(7)}`;
   return `${b}${p}`;
+}
+
+// ============================================================================
+// 工厂函数：按 apiFormat 选上游 serializer / parser / path
+// ============================================================================
+
+type UpstreamSerializer = (req: CanonicalRequest) => unknown;
+type UpstreamParser = (raw: unknown, model: string) => CanonicalResponse;
+
+function pickUpstreamSerializer(format: ApiFormat): UpstreamSerializer {
+  switch (format) {
+    case "openai-chat":        return canonicalToChatUpstream;
+    case "openai-responses":   return canonicalToResponses;
+    case "anthropic-messages": return canonicalToAnthropicUpstream;
+  }
+}
+
+function pickUpstreamParser(format: ApiFormat): UpstreamParser {
+  switch (format) {
+    case "openai-chat":        return parseChatUpstreamResponse;
+    case "openai-responses":   return parseResponsesResponse;
+    case "anthropic-messages": return parseAnthropicUpstreamResponse;
+  }
+}
+
+function pickUpstreamPath(sub: Subscription): string {
+  switch (sub.apiFormat) {
+    case "openai-chat":        return sub.chatCompletionsPath ?? "/v1/chat/completions";
+    case "openai-responses":   return sub.responsesPath ?? "/v1/responses";
+    case "anthropic-messages": return sub.messagesPath ?? "/v1/messages";
+  }
 }

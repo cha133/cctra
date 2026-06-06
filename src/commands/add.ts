@@ -117,6 +117,7 @@ async function promptNewSubscription(): Promise<Subscription> {
     endpoint: endpoint.trim(),
     token: token.trim(),
     apiFormat,
+    ...(apiFormat === "openai-responses" ? { responsesPath: "/v1/responses" } : {}),
     models: selected.map((id) => ({ id })),
     createdAt: Date.now(),
     updatedAt: Date.now(),

@@ -38,6 +38,7 @@ export interface Subscription extends Source {
   apiFormat: ApiFormat;
   chatCompletionsPath?: string;        // 默认 "/v1/chat/completions"（仅 openai-chat）
   messagesPath?: string;               // 默认 "/v1/messages"（仅 anthropic）
+  responsesPath?: string;              // 默认 "/v1/responses"（仅 openai-responses）
   modelsPath?: string;                 // 默认 "/v1/models"
   headers?: Record<string, string>;
   createdAt: number;
