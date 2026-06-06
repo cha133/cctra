@@ -2,6 +2,8 @@
 // Source 抽象：所有提供模型的服务（静态订阅 + 动态插件）的统一接口
 // ============================================================================
 
+import type { ApiFormat } from "./canonical/types";
+
 export type SourceKind = "subscription" | "plugin";
 
 export interface Source {
@@ -27,7 +29,7 @@ export interface Model {
 // Subscription：静态订阅（endpoint + token + 协议类型）
 // ============================================================================
 
-export type ApiFormat = "openai-chat" | "openai-responses" | "anthropic-messages";
+export type { ApiFormat } from "./canonical/types";
 
 export interface Subscription extends Source {
   kind: "subscription";
