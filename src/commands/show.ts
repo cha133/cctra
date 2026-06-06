@@ -5,7 +5,7 @@ import { Command } from "commander";
 import { withConfig } from "./shared";
 import { maskToken } from "../ui/prompts";
 import { bold, dim, info } from "../ui/format";
-import { getSource } from "../core/source";
+import { getSource, isSubscription, isPlugin } from "../core/source";
 
 export function registerShow(program: Command): void {
   program
@@ -20,11 +20,11 @@ export function registerShow(program: Command): void {
         }
 
         console.log(bold(`${s.name}`) + `  ${dim(`(${s.kind})`)}`);
-        if (s.kind === "subscription") {
+        if (isSubscription(s)) {
           console.log(`  ${dim("endpoint:")}  ${s.endpoint}`);
           console.log(`  ${dim("token:")}     ${maskToken(s.token)}`);
           console.log(`  ${dim("format:")}    ${s.apiFormat}`);
-        } else {
+        } else if (isPlugin(s)) {
           console.log(`  ${dim("path:")}      ${s.path}`);
           console.log(`  ${dim("enabled:")}   ${s.enabled}`);
           console.log(`  ${dim("config:")}    ${JSON.stringify(s.config)}`);
