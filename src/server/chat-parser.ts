@@ -26,7 +26,7 @@ export function parseChatUpstreamResponse(raw: unknown, model: string): Canonica
   const r = raw as ChatUpstreamResponse;
   const choice = r.choices?.[0];
   if (!choice) {
-    return makeErrorResponse(model, "no_choices");
+    return makeErrorResponse(model, "no_choices", { type: "parse_error" });
   }
 
   const blocks: CanonicalContentBlock[] = [];
@@ -63,12 +63,19 @@ function mapStopReason(r: string | undefined): CanonicalResponse["stopReason"] {
   }
 }
 
-function makeErrorResponse(model: string, reason: string): CanonicalResponse {
-  return {
+function makeErrorResponse(
+  model: string,
+  reason: string,
+  opts?: { type?: "parse_error" },
+): CanonicalResponse {
+  const message = `Upstream returned no valid response: ${reason}`;
+  const base: CanonicalResponse = {
     id: `error-${Date.now()}`,
     model,
-    content: [{ type: "text", text: `Upstream returned no valid response: ${reason}` }],
+    content: [{ type: "text", text: message }],
     stopReason: "error",
     usage: { inputTokens: 0, outputTokens: 0 },
   };
+  if (!opts?.type) return base;
+  return { ...base, error: { message, type: opts.type } };
 }

@@ -167,6 +167,8 @@ describe("Outbound response builders", () => {
 
   test("canonicalToChatResponse", () => {
     const r = canonicalToChatResponse(sampleCanonical);
+    // sampleCanonical 无 error 字段，runtime 一定返回 ChatResponse 分支；cast 让 tsc 不纠结
+    if (!("choices" in r)) throw new Error("expected success shape");
     expect(r.choices[0]?.message.content).toBe("Hello!");
     expect(r.choices[0]?.finish_reason).toBe("stop");
     expect(r.usage?.prompt_tokens).toBe(5);
@@ -174,13 +176,59 @@ describe("Outbound response builders", () => {
 
   test("canonicalToAnthropicResponse", () => {
     const r = canonicalToAnthropicResponse(sampleCanonical);
+    if (!("content" in r)) throw new Error("expected success shape");
     expect(r.content[0]).toEqual({ type: "text", text: "Hello!" });
     expect(r.stop_reason).toBe("end_turn");
   });
 
   test("canonicalToResponsesResponse", () => {
     const r = canonicalToResponsesResponse(sampleCanonical);
+    if (!("output" in r)) throw new Error("expected success shape");
     expect(r.output[0]?.type).toBe("message");
     expect((r.output[0] as { content: Array<{ text: string }> })?.content[0]?.text).toBe("Hello!");
+  });
+});
+
+// ============================================================================
+// 流式 formatter：error chunk → 发 error event + 抑制终止事件
+// （cc-switch `chat_sse_error_event_emits_failed_without_completed` 验证语义）
+// ============================================================================
+
+describe("Streaming formatter error event + terminal suppression", () => {
+  test("ChatStreamFormatter: error chunk emits error event, suppresses [DONE]", () => {
+    const { ChatStreamFormatter } = require("../src/convert/streaming/outbound/format-chat");
+    const f = new ChatStreamFormatter();
+    const errOut = f.format({ type: "error", error: "upstream failed" });
+    expect(errOut).toHaveLength(1);
+    const errEvent = JSON.parse(errOut[0]!.replace(/^data: /, "").replace(/\n\n$/, "")) as { error: { message: string; type: string } };
+    expect(errEvent.error.message).toBe("upstream failed");
+
+    // message_stop 之后**不发 [DONE]**（流中错抑制）
+    const stopOut = f.format({ type: "message_stop" });
+    expect(stopOut).toEqual([]);
+  });
+
+  test("AnthropicStreamFormatter: error chunk emits error event, suppresses message_stop", () => {
+    const { AnthropicStreamFormatter } = require("../src/convert/streaming/outbound/format-anthropic");
+    const f = new AnthropicStreamFormatter();
+    const errOut = f.format({ type: "error", error: "upstream failed" });
+    expect(errOut).toHaveLength(1);
+    expect(errOut[0]).toMatch(/^event: error\n/);
+
+    // message_stop 之后**不发 message_stop event**（流中错抑制）
+    const stopOut = f.format({ type: "message_stop" });
+    expect(stopOut).toEqual([]);
+  });
+
+  test("ResponsesStreamFormatter: error chunk emits error event, suppresses response.completed + [DONE]", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const f = new ResponsesStreamFormatter();
+    const errOut = f.format({ type: "error", error: "upstream failed" });
+    expect(errOut).toHaveLength(1);
+    expect(errOut[0]).toMatch(/"type":"response\.error"/);
+
+    // message_stop 之后**不发 response.completed + [DONE]**（流中错抑制）
+    const stopOut = f.format({ type: "message_stop" });
+    expect(stopOut).toEqual([]);
   });
 });

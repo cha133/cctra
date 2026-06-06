@@ -78,12 +78,26 @@ export interface CanonicalTool {
 
 // ---------- Response ----------
 
+/**
+ * 错误响应的结构化字段。
+ * - `message`：人类可读错误消息
+ * - `status`：上游 HTTP status code（4xx/5xx 透传用；plugin/network/parse 错无此字段）
+ * - `type`：错误分类标签
+ */
+export interface CanonicalResponseError {
+  message: string;
+  status?: number;
+  type?: "upstream_error" | "network_error" | "plugin_error" | "parse_error";
+}
+
 export interface CanonicalResponse {
   id: string;
   model: string;
   content: CanonicalContentBlock[];
   stopReason: StopReason;
   usage: CanonicalUsage;
+  /** 错误响应的结构化字段（替代过去用 `content[0].text` + `stopReason: "error"` 表达错误） */
+  error?: CanonicalResponseError;
 }
 
 export interface CanonicalUsage {

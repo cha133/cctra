@@ -3,9 +3,10 @@
 // ============================================================================
 import type { Config } from "../../types";
 import { chatToCanonical } from "../../convert/inbound/chat-to-canonical";
-import { callUpstream, callUpstreamStream } from "../upstream";
+import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
 import { canonicalToChatResponse } from "../../convert/outbound/canonical-to-chat";
 import { chatErrorBody } from "../error";
+import { errorResponseToHttpStatus } from "../error-status";
 import { resolveRoute } from "../../core/routing";
 import { wrapWithKeepalive } from "../keepalive";
 import { loadConfigFile } from "../../core/config";
@@ -53,6 +54,14 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
             }
           } catch (e) {
             logger.error(`[chat-completions:stream] error: ${(e as Error).message}`);
+            if (e instanceof UpstreamError) {
+              // OpenAI Chat 错误 SSE 事件：data: {"error": {...}}
+              // 注意：发完 error 后**不再发 [DONE]**（cc-switch 二元化约束）
+              const errEvent = `data: ${JSON.stringify({
+                error: { message: e.message, type: "upstream_error", code: e.status },
+              })}\n\n`;
+              controller.enqueue(encoder.encode(errEvent));
+            }
           } finally {
             controller.close();
           }
@@ -71,7 +80,11 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     const upstreamRes = await callUpstream({
       route, canonical, clientFormat: "openai-chat", clientSignal: req.signal,
     });
-    return Response.json(canonicalToChatResponse(upstreamRes));
+    const body = canonicalToChatResponse(upstreamRes);
+    const httpStatus = errorResponseToHttpStatus(upstreamRes);
+    return httpStatus !== undefined
+      ? Response.json(body, { status: httpStatus })
+      : Response.json(body);
   } catch (e) {
     return Response.json(chatErrorBody((e as Error).message), { status: 500 });
   }

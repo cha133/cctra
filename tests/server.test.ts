@@ -80,6 +80,55 @@ updatedAt = 1700000000000
 [[subscriptions.responses-echo-sub.models]]
 id = "x"
 
+# H 错误透传测试 fixture
+[subscriptions.chat-401-sub]
+name = "chat-401-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/error-401"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[subscriptions.chat-401-sub.models]]
+id = "x"
+
+[subscriptions.anthropic-429-sub]
+name = "anthropic-429-sub"
+endpoint = "${mockBaseUrl}"
+messagesPath = "/chat/error-429"
+token = "mock-token"
+apiFormat = "anthropic-messages"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[subscriptions.anthropic-429-sub.models]]
+id = "x"
+
+[subscriptions.responses-500-sub]
+name = "responses-500-sub"
+endpoint = "${mockBaseUrl}"
+responsesPath = "/chat/error-500"
+token = "mock-token"
+apiFormat = "openai-responses"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[subscriptions.responses-500-sub.models]]
+id = "x"
+
+[subscriptions.stream-error-sub]
+name = "stream-error-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/stream-error"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[subscriptions.stream-error-sub.models]]
+id = "x"
+
 [tiers.cctra-pro]
 name = "cctra-pro"
 target = "test-sub/model-a"
@@ -436,6 +485,96 @@ describe("Cross-format upstream: openai-responses", () => {
     const text = data.output[0]!.content[0]!.text;
     // input 是 string 时会被规范成 1 个 user message
     expect(text).toMatch(/^echo: test instruction \(input_items=1\)/);
+  });
+});
+
+// ============================================================================
+// H 错误码透传（status code 跨层传递 + error response shape）
+// ============================================================================
+
+describe("Error status propagation", () => {
+  test("upstream 401 returns 401 to OpenAI Chat client", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "chat-401-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(res.status).toBe(401);
+    const data = await res.json() as { error: { message: string; code?: number } };
+    expect(data.error.message).toBe("Invalid API key");
+    expect(data.error.code).toBe(401);
+  });
+
+  test("upstream 429 returns 429 to Anthropic Messages client", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic-429-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+      }),
+    });
+    expect(res.status).toBe(429);
+    const data = await res.json() as { type: string; error: { type: string; message: string } };
+    expect(data.type).toBe("error");
+    expect(data.error.message).toBe("Rate limit exceeded");
+  });
+
+  test("upstream 500 returns 500 to Responses client", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-500-sub/x",
+        input: "hi",
+      }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json() as { error: { code: string; message: string } };
+    expect(data.error.code).toBe("500");
+    expect(data.error.message).toBe("Internal server error");
+  });
+
+  test("streaming upstream error → client receives error event + no [DONE]", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "stream-error-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toBeNull();
+    const events = await collectSse(res.body!);
+
+    // 抽 data: 行
+    const dataLines: string[] = [];
+    for (const ev of events) {
+      const dl = ev.split("\n").find((l) => l.startsWith("data:"));
+      if (dl) dataLines.push(dl.slice(5).trim());
+    }
+    const parsed = dataLines
+      .filter((d) => d && d !== "[DONE]")
+      .map((d) => {
+        try { return JSON.parse(d) as Record<string, unknown>; }
+        catch { return null; }
+      })
+      .filter((x): x is Record<string, unknown> => x !== null);
+
+    // 必须有 error event
+    const errorEvent = parsed.find((p) => "error" in p);
+    expect(errorEvent).toBeDefined();
+    expect((errorEvent!.error as { message: string }).message).toBe("stream interrupted");
+
+    // 流中错后**不应再有 [DONE]**（cc-switch 二元化约束）
+    // 注意：dataLines 已过滤 [DONE]，所以这里只检查"没有 [DONE]"
+    expect(dataLines).not.toContain("[DONE]");
   });
 });
 

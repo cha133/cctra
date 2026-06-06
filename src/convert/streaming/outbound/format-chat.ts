@@ -23,6 +23,8 @@ export class ChatStreamFormatter {
   private nextToolIndex = 0;
   // Canonical block_index → OpenAI tool_calls 槽位
   private blockToToolSlot = new Map<number, ToolSlot>();
+  // 流中错已发 error event：抑制 [DONE]（避免"错 + 完成"矛盾信号）
+  private _streamEndedWithError = false;
 
   format(chunk: CanonicalChunk): string[] {
     switch (chunk.type) {
@@ -82,11 +84,20 @@ export class ChatStreamFormatter {
       }
 
       case "message_stop":
+        // 流中错时抑制 [DONE]（cc-switch 二元化约束）
+        if (this._streamEndedWithError) return [];
         return ["data: [DONE]\n\n"];
 
       case "ping":
-      case "error":
         return [];
+
+      case "error": {
+        // 流中错：发 error SSE event + 设抑制标志
+        this._streamEndedWithError = true;
+        return [`data: ${JSON.stringify({
+          error: { message: chunk.error, type: "upstream_error" },
+        })}\n\n`];
+      }
     }
   }
 

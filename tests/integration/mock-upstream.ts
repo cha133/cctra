@@ -7,6 +7,8 @@
 //   POST /chat/echo-body           回显请求体（验证 multimodal）
 //   POST /chat/slow                慢响应（每 N 秒一个 chunk）
 //   POST /chat/track-abort         记录请求是否被 abort
+//   POST /chat/error-401/429/500   返回 4xx/5xx 错误（验证错误码透传）
+//   POST /chat/stream-error        返回 200 + SSE error event（验证流中错不发终止事件）
 //   GET  /v1/models                返回固定模型列表
 // ============================================================================
 
@@ -53,6 +55,11 @@ export function startMockUpstream(): MockUpstreamHandle {
       if (path === "/chat/echo-body") return jsonEcho(body);
       if (path === "/chat/slow") return chatSlowStream(req.signal);
       if (path === "/chat/track-abort") return chatSlowStream(req.signal);
+      // 错误端点（验证 H 错误码透传）
+      if (path === "/chat/error-401") return chatErrorResponse(401, "Invalid API key");
+      if (path === "/chat/error-429") return chatErrorResponse(429, "Rate limit exceeded");
+      if (path === "/chat/error-500") return chatErrorResponse(500, "Internal server error");
+      if (path === "/chat/stream-error") return chatStreamError();
       // OpenAI Responses 路径（验证 L.2 上游协议修复）
       if (path === "/v1/responses/echo") return responsesEcho(body);
       if (path === "/v1/responses/stream-text") return responsesStreamText();
@@ -174,6 +181,37 @@ function chatSlowStream(signal: AbortSignal): Response {
       try { controller.close(); } catch { /* 已关 */ }
     },
     cancel() { /* nothing — signal 监听里已处理 */ },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+/** 4xx/5xx 错误响应：返回 JSON `{error: {message, type, code}}` 加对应 status */
+function chatErrorResponse(status: number, message: string): Response {
+  return new Response(JSON.stringify({ error: { message, type: "api_error", code: status } }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** 200 + text/event-stream + 中途发 `data: {"error":...}` chunk（验证流中错不发终止事件）*/
+function chatStreamError(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      // 先发一段正常 content
+      controller.enqueue(encoder.encode(sseChunk({
+        choices: [{ index: 0, delta: { role: "assistant", content: "Hello" }, finish_reason: null }],
+      })));
+      // 中途发 error chunk
+      controller.enqueue(encoder.encode(sseChunk({
+        error: { message: "stream interrupted", type: "api_error" },
+      })));
+      // 模拟某些上游会再发 [DONE]（验证 formatter 抑制）
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
   });
   return new Response(stream, {
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },

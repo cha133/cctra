@@ -19,7 +19,24 @@ interface AnthropicResponse {
   };
 }
 
-export function canonicalToAnthropicResponse(res: CanonicalResponse): AnthropicResponse {
+/** Anthropic 错误响应：{ type: "error", error: { type, message } } */
+interface AnthropicErrorResponse {
+  type: "error";
+  error: { type: string; message: string };
+}
+
+export function canonicalToAnthropicResponse(res: CanonicalResponse): AnthropicResponse | AnthropicErrorResponse {
+  // 错误响应：短路返回 Anthropic 错误 shape
+  if (res.error) {
+    return {
+      type: "error",
+      error: {
+        type: res.error.type ?? "api_error",
+        message: res.error.message,
+      },
+    };
+  }
+
   const content: AnthropicResponse["content"] = [];
   for (const b of res.content) {
     if (b.type === "text") content.push({ type: "text", text: b.text });

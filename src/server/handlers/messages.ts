@@ -2,9 +2,10 @@
 // POST /anthropic/v1/messages 处理器
 // ============================================================================
 import { anthropicToCanonical } from "../../convert/inbound/anthropic-to-canonical";
-import { callUpstream, callUpstreamStream } from "../upstream";
+import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
 import { canonicalToAnthropicResponse } from "../../convert/outbound/canonical-to-anthropic";
 import { anthropicErrorBody } from "../error";
+import { errorResponseToHttpStatus } from "../error-status";
 import { resolveRoute } from "../../core/routing";
 import { wrapWithKeepalive } from "../keepalive";
 import { loadConfigFile } from "../../core/config";
@@ -51,6 +52,15 @@ export async function handleMessages(req: Request): Promise<Response> {
             }
           } catch (e) {
             logger.error(`[messages:stream] error: ${(e as Error).message}`);
+            if (e instanceof UpstreamError) {
+              // Anthropic 错误 SSE 事件：event: error / data: {"type":"error",...}
+              // 注意：发完 error 后**不再发 message_stop**（cc-switch 二元化约束）
+              const errEvent = `event: error\ndata: ${JSON.stringify({
+                type: "error",
+                error: { type: "api_error", message: e.message },
+              })}\n\n`;
+              controller.enqueue(encoder.encode(errEvent));
+            }
           } finally {
             controller.close();
           }
@@ -68,7 +78,11 @@ export async function handleMessages(req: Request): Promise<Response> {
     const upstreamRes = await callUpstream({
       route, canonical, clientFormat: "anthropic-messages", clientSignal: req.signal,
     });
-    return Response.json(canonicalToAnthropicResponse(upstreamRes));
+    const body = canonicalToAnthropicResponse(upstreamRes);
+    const httpStatus = errorResponseToHttpStatus(upstreamRes);
+    return httpStatus !== undefined
+      ? Response.json(body, { status: httpStatus })
+      : Response.json(body);
   } catch (e) {
     return Response.json(anthropicErrorBody((e as Error).message), { status: 500 });
   }

@@ -2,9 +2,10 @@
 // POST /v1/responses 处理器
 // ============================================================================
 import { responsesToCanonical } from "../../convert/inbound/responses-to-canonical";
-import { callUpstream, callUpstreamStream } from "../upstream";
+import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
 import { canonicalToResponsesResponse } from "../../convert/outbound/canonical-to-responses";
 import { responsesErrorBody } from "../error";
+import { errorResponseToHttpStatus } from "../error-status";
 import { resolveRoute } from "../../core/routing";
 import { wrapWithKeepalive } from "../keepalive";
 import { loadConfigFile } from "../../core/config";
@@ -51,6 +52,15 @@ export async function handleResponses(req: Request): Promise<Response> {
             }
           } catch (e) {
             logger.error(`[responses:stream] error: ${(e as Error).message}`);
+            if (e instanceof UpstreamError) {
+              // Responses 错误 SSE 事件：event: response.error / data: {...}
+              // 注意：发完 error 后**不再发 response.completed**（cc-switch 二元化约束）
+              const errEvent = `event: response.error\ndata: ${JSON.stringify({
+                code: e.status?.toString() ?? "upstream_error",
+                message: e.message,
+              })}\n\n`;
+              controller.enqueue(encoder.encode(errEvent));
+            }
           } finally {
             controller.close();
           }
@@ -68,7 +78,11 @@ export async function handleResponses(req: Request): Promise<Response> {
     const upstreamRes = await callUpstream({
       route, canonical, clientFormat: "openai-responses", clientSignal: req.signal,
     });
-    return Response.json(canonicalToResponsesResponse(upstreamRes));
+    const body = canonicalToResponsesResponse(upstreamRes);
+    const httpStatus = errorResponseToHttpStatus(upstreamRes);
+    return httpStatus !== undefined
+      ? Response.json(body, { status: httpStatus })
+      : Response.json(body);
   } catch (e) {
     return Response.json(responsesErrorBody((e as Error).message), { status: 500 });
   }

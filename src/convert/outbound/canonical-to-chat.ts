@@ -28,7 +28,23 @@ interface ChatResponse {
   };
 }
 
-export function canonicalToChatResponse(res: CanonicalResponse): ChatResponse {
+/** OpenAI Chat 错误响应：{ error: { message, type, code? } }，无 choices/usage */
+interface ChatErrorResponse {
+  error: { message: string; type: string; code?: number };
+}
+
+export function canonicalToChatResponse(res: CanonicalResponse): ChatResponse | ChatErrorResponse {
+  // 错误响应：短路返回 OpenAI Chat 错误 shape
+  if (res.error) {
+    return {
+      error: {
+        message: res.error.message,
+        type: res.error.type ?? "upstream_error",
+        ...(res.error.status !== undefined && { code: res.error.status }),
+      },
+    };
+  }
+
   const text = extractText(res.content);
   const toolUses = res.content.filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown } => b.type === "tool_use");
 

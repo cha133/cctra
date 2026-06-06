@@ -28,7 +28,22 @@ interface ResponsesResponse {
   };
 }
 
-export function canonicalToResponsesResponse(res: CanonicalResponse): ResponsesResponse {
+/** OpenAI Responses 错误响应：{ error: { code, message } } */
+interface ResponsesErrorResponse {
+  error: { code: string; message: string };
+}
+
+export function canonicalToResponsesResponse(res: CanonicalResponse): ResponsesResponse | ResponsesErrorResponse {
+  // 错误响应：短路返回 Responses 错误 shape
+  if (res.error) {
+    return {
+      error: {
+        code: res.error.status?.toString() ?? "upstream_error",
+        message: res.error.message,
+      },
+    };
+  }
+
   const output: ResponsesOutput[] = [];
 
   // 把所有 text + refusal 合并成一个 message item

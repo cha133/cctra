@@ -59,10 +59,16 @@ export async function* chatStreamToCanonical(
       continue;
     }
 
-    let parsed: ChatStreamChunk;
+    let parsed: ChatStreamChunk & { error?: { message?: unknown } };
     try {
-      parsed = JSON.parse(ev.data) as ChatStreamChunk;
+      parsed = JSON.parse(ev.data) as ChatStreamChunk & { error?: { message?: unknown } };
     } catch {
+      continue;
+    }
+
+    // 流中错：上游 SSE 内嵌 {error: {message}} 时透传为 canonical error chunk
+    if (parsed.error && typeof parsed.error.message === "string") {
+      yield { type: "error", error: parsed.error.message };
       continue;
     }
 

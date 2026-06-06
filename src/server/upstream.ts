@@ -16,6 +16,22 @@ import { ResponsesStreamFormatter } from "../convert/streaming/outbound/format-r
 import { AnthropicStreamFormatter } from "../convert/streaming/outbound/format-anthropic";
 import { cancelableFetch } from "./cancelable-fetch";
 import { logger } from "../utils/logger";
+import type { CanonicalResponseError } from "../canonical/types";
+
+/**
+ * 流式路径专用 typed error：携带上游 HTTP status 给 handler 决定 HTTP 响应。
+ * HTTP 4xx/5xx 到达 `callUpstreamStream` 时直接 throw，handler 在 SSE 流内发 error event。
+ */
+export class UpstreamError extends Error {
+  constructor(
+    public readonly status: number | undefined,
+    public readonly body: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "UpstreamError";
+  }
+}
 
 export interface UpstreamCallOptions {
   route: { source: Source; upstreamModelId: string; apiFormat: ApiFormat };
@@ -29,7 +45,7 @@ export interface UpstreamCallOptions {
 export async function callUpstream(opts: UpstreamCallOptions): Promise<CanonicalResponse> {
   const ready = await resolveUpstream(opts.route);
   if (!ready) {
-    return makeError(opts.route.upstreamModelId, "plugin_returned_no_config");
+    return makeError(opts.route.upstreamModelId, "plugin_returned_no_config", { type: "plugin_error" });
   }
 
   const upstreamBody = pickUpstreamSerializer(ready.apiFormat)(opts.canonical);
@@ -48,12 +64,29 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
       body: JSON.stringify(upstreamBody),
     }, opts.clientSignal);
   } catch (e) {
-    return makeError(opts.route.upstreamModelId, `network_error: ${(e as Error).message}`);
+    return makeError(
+      opts.route.upstreamModelId,
+      `network_error: ${(e as Error).message}`,
+      { type: "network_error" },
+    );
   }
 
   if (!res.ok) {
     const text = await res.text();
-    return makeError(opts.route.upstreamModelId, `upstream_${res.status}: ${text.slice(0, 500)}`);
+    // 优先抽 body 的 error.message（OpenAI/Anthropic/Responses 标准 shape），
+    // 抽不到时回退到 raw text 截 500 字符
+    let message = text.slice(0, 500);
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+      if (typeof parsed.error?.message === "string") {
+        message = parsed.error.message.slice(0, 500);
+      }
+    } catch { /* 非 JSON body，保持 raw text */ }
+    return makeError(
+      opts.route.upstreamModelId,
+      message,
+      { status: res.status, type: "upstream_error" },
+    );
   }
 
   const raw = await res.json();
@@ -89,7 +122,7 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
 
   if (!res.ok || !res.body) {
     const text = res.body ? await res.text() : `upstream_${res.status}`;
-    throw new Error(text.slice(0, 500));
+    throw new UpstreamError(res.status, text.slice(0, 500), text.slice(0, 500));
   }
 
   // 关键：parser 用 ready.apiFormat（plugin 真实返回），不是 route.apiFormat（plugin 占位）
@@ -155,13 +188,26 @@ async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<Rea
   }
 }
 
-function makeError(model: string, msg: string): CanonicalResponse {
-  return {
+function makeError(
+  model: string,
+  msg: string,
+  opts?: { status?: number; type?: CanonicalResponseError["type"] },
+): CanonicalResponse {
+  const base = {
     id: `error-${Date.now()}`,
     model,
-    content: [{ type: "text", text: msg }],
-    stopReason: "error",
+    content: [{ type: "text", text: msg }] as CanonicalResponse["content"],
+    stopReason: "error" as const,
     usage: { inputTokens: 0, outputTokens: 0 },
+  };
+  if (opts?.status === undefined && !opts?.type) return base;
+  return {
+    ...base,
+    error: {
+      message: msg,
+      ...(opts.status !== undefined && { status: opts.status }),
+      ...(opts.type && { type: opts.type }),
+    },
   };
 }
 

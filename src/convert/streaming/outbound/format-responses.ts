@@ -24,6 +24,8 @@ export class ResponsesStreamFormatter {
   private id = `resp_${Date.now()}`;
   private model = "";
   private blocks = new Map<number, BlockMeta>();
+  // 流中错已发 error event：抑制 response.completed + [DONE]（避免"错 + 完成"矛盾信号）
+  private _streamEndedWithError = false;
 
   format(chunk: CanonicalChunk): string[] {
     switch (chunk.type) {
@@ -154,6 +156,8 @@ export class ResponsesStreamFormatter {
         return [];
 
       case "message_stop": {
+        // 流中错时抑制 response.completed + [DONE]（cc-switch 二元化约束）
+        if (this._streamEndedWithError) return [];
         return [
           event({
             type: "response.completed",
@@ -166,8 +170,11 @@ export class ResponsesStreamFormatter {
       case "ping":
         return [];
 
-      case "error":
+      case "error": {
+        // 流中错：发 error event + 设抑制标志
+        this._streamEndedWithError = true;
         return [event({ type: "response.error", error: { message: chunk.error } })];
+      }
     }
   }
 }
