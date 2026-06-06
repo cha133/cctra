@@ -53,6 +53,10 @@ export function startMockUpstream(): MockUpstreamHandle {
       if (path === "/chat/echo-body") return jsonEcho(body);
       if (path === "/chat/slow") return chatSlowStream(req.signal);
       if (path === "/chat/track-abort") return chatSlowStream(req.signal);
+      // OpenAI Responses 路径（验证 L.2 上游协议修复）
+      if (path === "/v1/responses/echo") return responsesEcho(body);
+      if (path === "/v1/responses/stream-text") return responsesStreamText();
+      if (path === "/v1/responses/stream-tool-call") return responsesStreamToolCall();
       if (path === "/v1/models") return Response.json({ data: [{ id: "mock-model" }] });
 
       return new Response("not found", { status: 404 });
@@ -170,6 +174,102 @@ function chatSlowStream(signal: AbortSignal): Response {
       try { controller.close(); } catch { /* 已关 */ }
     },
     cancel() { /* nothing — signal 监听里已处理 */ },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+// ---------- OpenAI Responses 模拟 ----------
+
+/** SSE 行：OpenAI Responses 事件以 `event:` + `data:` 双行组成 */
+function responsesEvent(eventName: string, data: unknown): string {
+  return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+/** 非流式：回显 `instructions` 作为 output_text */
+function responsesEcho(body: unknown): Response {
+  const b = body as { instructions?: string; input?: unknown[] };
+  return Response.json({
+    id: "resp_mock_echo",
+    object: "response",
+    created_at: Date.now(),
+    status: "completed",
+    model: "mock-responses",
+    output: [{
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: `echo: ${b.instructions ?? ""} (input_items=${(b.input ?? []).length})` }],
+    }],
+    usage: { input_tokens: 5, output_tokens: 10 },
+  });
+}
+
+/** 流式：返回 1 段文本（response.created → output_text.delta → completed） */
+function responsesStreamText(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(responsesEvent("response.created", {
+        type: "response.created",
+        response: { id: "resp_mock_text", object: "response", status: "in_progress", output: [] },
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.output_text.delta", {
+        type: "response.output_text.delta",
+        item_id: "msg_mock",
+        output_index: 0,
+        delta: "Hello",
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.output_text.delta", {
+        type: "response.output_text.delta",
+        item_id: "msg_mock",
+        output_index: 0,
+        delta: " world",
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.completed", {
+        type: "response.completed",
+        response: { id: "resp_mock_text", status: "completed", usage: { input_tokens: 5, output_tokens: 10 } },
+      })));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+/** 流式：返回 1 个 function_call */
+function responsesStreamToolCall(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(responsesEvent("response.created", {
+        type: "response.created",
+        response: { id: "resp_mock_tc", object: "response", status: "in_progress", output: [] },
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.output_item.added", {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "function_call", id: "fc_mock", call_id: "call_xyz", name: "get_time", arguments: "" },
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.function_call_arguments.delta", {
+        type: "response.function_call_arguments.delta",
+        item_id: "fc_mock",
+        output_index: 0,
+        delta: '{"tz"',
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.function_call_arguments.delta", {
+        type: "response.function_call_arguments.delta",
+        item_id: "fc_mock",
+        output_index: 0,
+        delta: '":"UTC"}',
+      })));
+      controller.enqueue(encoder.encode(responsesEvent("response.completed", {
+        type: "response.completed",
+        response: { id: "resp_mock_tc", status: "completed", usage: { input_tokens: 5, output_tokens: 10 } },
+      })));
+      controller.close();
+    },
   });
   return new Response(stream, {
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },

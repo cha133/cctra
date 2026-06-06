@@ -68,6 +68,18 @@ updatedAt = 1700000000000
 [[subscriptions.slow-sub.models]]
 id = "x"
 
+[subscriptions.responses-echo-sub]
+name = "responses-echo-sub"
+endpoint = "${mockBaseUrl}"
+responsesPath = "/v1/responses/echo"
+token = "mock-token"
+apiFormat = "openai-responses"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[subscriptions.responses-echo-sub.models]]
+id = "x"
+
 [tiers.cctra-pro]
 name = "cctra-pro"
 target = "test-sub/model-a"
@@ -364,6 +376,66 @@ describe("SSE keepalive", () => {
     // 等一会，如果 timer 没清，进程不会退；这里能完成就算过
     await new Promise((r) => setTimeout(r, 200));
     expect(true).toBe(true);
+  });
+});
+
+// ============================================================================
+// Cross-format 集成测试（L.2 验证：Responses 上游协议真的能跑）
+// ============================================================================
+
+describe("Cross-format upstream: openai-responses", () => {
+  test("Anthropic client → cctra → Responses upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-echo-sub/x",
+        system: "you are helpful",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { content: Array<{ type: string; text?: string }> };
+    const textBlock = data.content.find((b) => b.type === "text");
+    expect(textBlock).toBeDefined();
+    // echo 端点会回显 instructions + input_items 数量
+    expect(textBlock!.text).toMatch(/^echo: you are helpful \(input_items=1\)/);
+  });
+
+  test("OpenAI Chat client → cctra → Responses upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-echo-sub/x",
+        messages: [
+          { role: "system", content: "be terse" },
+          { role: "user", content: "hello" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    expect(data.choices[0]!.message.content).toMatch(/^echo: be terse \(input_items=1\)/);
+  });
+
+  test("Responses client → cctra → Responses upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-echo-sub/x",
+        instructions: "test instruction",
+        input: "user message",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { output: Array<{ type: string; content: Array<{ type: string; text: string }> }> };
+    expect(data.output[0]!.type).toBe("message");
+    const text = data.output[0]!.content[0]!.text;
+    // input 是 string 时会被规范成 1 个 user message
+    expect(text).toMatch(/^echo: test instruction \(input_items=1\)/);
   });
 });
 
