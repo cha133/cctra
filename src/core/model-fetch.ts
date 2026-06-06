@@ -57,7 +57,7 @@ export async function fetchUpstreamModels(opts: FetchModelsOptions): Promise<str
   try {
     const url = joinUrl(opts.endpoint, path);
     const headers: Record<string, string> = {};
-    if (opts.apiFormat === "openai-chat" || opts.apiFormat === "anthropic-messages") {
+    if (opts.apiFormat === "openai-chat" || opts.apiFormat === "openai-responses" || opts.apiFormat === "anthropic-messages") {
       if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
     }
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });

@@ -27,7 +27,7 @@ export interface Model {
 // Subscription：静态订阅（endpoint + token + 协议类型）
 // ============================================================================
 
-export type ApiFormat = "openai-chat" | "anthropic-messages";
+export type ApiFormat = "openai-chat" | "openai-responses" | "anthropic-messages";
 
 export interface Subscription extends Source {
   kind: "subscription";

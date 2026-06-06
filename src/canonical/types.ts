@@ -3,7 +3,7 @@
 // shape 接近 Anthropic Messages（因为它表达能力最丰富）
 // ============================================================================
 
-export type ApiFormat = "openai-chat" | "anthropic-messages";
+export type ApiFormat = "openai-chat" | "openai-responses" | "anthropic-messages";
 
 export type StopReason = "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | "error";
 
@@ -20,6 +20,10 @@ export interface CanonicalRequest {
   stopSequences?: string[];
   stream: boolean;
   metadata?: Record<string, unknown>;
+  // OpenAI Responses 多轮链路 ID（cctra 仅做透传，不维护链路状态）
+  previousResponseId?: string;
+  // 思考强度（OpenAI Responses `reasoning.effort` / Anthropic `thinking.budget_tokens` 的统一抽象）
+  reasoning?: { effort?: "low" | "medium" | "high" };
 }
 
 export interface CanonicalMessage {
@@ -33,7 +37,8 @@ export type CanonicalContentBlock =
   | { type: "document"; source: DocumentSource }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; toolUseId: string; content: string | CanonicalContentBlock[]; isError?: boolean }
-  | { type: "thinking"; thinking: string; signature?: string };
+  | { type: "thinking"; thinking: string; signature?: string }
+  | { type: "refusal"; refusal: string };
 
 export interface ImageSource {
   kind: "url" | "base64";

@@ -6,8 +6,7 @@ import { callUpstream, callUpstreamStream } from "../upstream";
 import { canonicalToAnthropicResponse } from "../../convert/outbound/canonical-to-anthropic";
 import { anthropicErrorBody } from "../error";
 import { resolveRoute } from "../../core/routing";
-import { anthropicStreamToCanonical } from "../../convert/streaming/inbound/anthropic-stream";
-import { chatStreamToCanonical } from "../../convert/streaming/inbound/chat-stream";
+import { wrapWithKeepalive } from "../keepalive";
 import { loadConfigFile } from "../../core/config";
 import { logger } from "../../utils/logger";
 
@@ -36,22 +35,19 @@ export async function handleMessages(req: Request): Promise<Response> {
 
   if (canonical.stream) {
     try {
-      const { upstreamStream, formatChunk } = await callUpstreamStream({
+      const { upstreamStream, parser, format } = await callUpstreamStream({
         route,
         canonical,
         clientFormat: "anthropic-messages",
+        clientSignal: req.signal,
       });
-      // v1 简化：上游 stream 一律当 Chat SSE 解析
-      const cstream = route.apiFormat === "anthropic-messages"
-        ? anthropicStreamToCanonical(upstreamStream)
-        : chatStreamToCanonical(upstreamStream);
+      const cstream = parser(upstreamStream);
       const encoder = new TextEncoder();
-      const out = new ReadableStream({
+      const inner = new ReadableStream<Uint8Array>({
         async start(controller) {
           try {
             for await (const chunk of cstream) {
-              const s = formatChunk(chunk);
-              if (s) controller.enqueue(encoder.encode(s));
+              for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
             logger.error(`[messages:stream] error: ${(e as Error).message}`);
@@ -60,7 +56,7 @@ export async function handleMessages(req: Request): Promise<Response> {
           }
         },
       });
-      return new Response(out, {
+      return new Response(wrapWithKeepalive(inner), {
         headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
       });
     } catch (e) {
@@ -69,7 +65,9 @@ export async function handleMessages(req: Request): Promise<Response> {
   }
 
   try {
-    const upstreamRes = await callUpstream({ route, canonical, clientFormat: "anthropic-messages" });
+    const upstreamRes = await callUpstream({
+      route, canonical, clientFormat: "anthropic-messages", clientSignal: req.signal,
+    });
     return Response.json(canonicalToAnthropicResponse(upstreamRes));
   } catch (e) {
     return Response.json(anthropicErrorBody((e as Error).message), { status: 500 });

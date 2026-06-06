@@ -1,8 +1,18 @@
 // ============================================================================
 // Canonical → OpenAI Responses API 响应
-// v1 简化版：只输出 output_text 和 function_call 块
+// 输出 message (output_text/refusal) + function_call + reasoning 块
+// 跳过：5 个内置工具调用（Canonical 不承载）
 // ============================================================================
 import type { CanonicalResponse, CanonicalContentBlock } from "../../canonical/types";
+
+type MessageContent =
+  | { type: "output_text"; text: string }
+  | { type: "refusal"; refusal: string };
+
+type ResponsesOutput =
+  | { type: "message"; id?: string; role: "assistant"; content: MessageContent[] }
+  | { type: "function_call"; id: string; name: string; arguments: string; call_id: string }
+  | { type: "reasoning"; id: string; summary: Array<{ type: "summary_text"; text: string }> };
 
 interface ResponsesResponse {
   id: string;
@@ -10,10 +20,7 @@ interface ResponsesResponse {
   created_at: number;
   model: string;
   status: "completed" | "incomplete" | "failed";
-  output: Array<
-    | { type: "message"; role: "assistant"; content: Array<{ type: "output_text"; text: string }> }
-    | { type: "function_call"; id: string; name: string; arguments: string; call_id: string }
-  >;
+  output: ResponsesOutput[];
   usage: {
     input_tokens: number;
     output_tokens: number;
@@ -22,25 +29,44 @@ interface ResponsesResponse {
 }
 
 export function canonicalToResponsesResponse(res: CanonicalResponse): ResponsesResponse {
-  const text = extractText(res.content);
-  const toolUses = res.content.filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown } => b.type === "tool_use");
+  const output: ResponsesOutput[] = [];
 
-  const output: ResponsesResponse["output"] = [];
-  if (text) {
-    output.push({
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text }],
-    });
+  // 把所有 text + refusal 合并成一个 message item
+  const messageContent: MessageContent[] = [];
+  for (const b of res.content) {
+    if (b.type === "text" && b.text) {
+      messageContent.push({ type: "output_text", text: b.text });
+    } else if (b.type === "refusal") {
+      messageContent.push({ type: "refusal", refusal: b.refusal });
+    }
   }
-  for (const u of toolUses) {
-    output.push({
-      type: "function_call",
-      id: u.id,
-      name: u.name,
-      arguments: typeof u.input === "string" ? u.input : JSON.stringify(u.input ?? {}),
-      call_id: u.id,
-    });
+  if (messageContent.length > 0) {
+    output.push({ type: "message", id: `msg_${res.id}`, role: "assistant", content: messageContent });
+  }
+
+  // tool_use → function_call
+  for (const b of res.content) {
+    if (b.type === "tool_use") {
+      output.push({
+        type: "function_call",
+        id: b.id,
+        name: b.name,
+        arguments: typeof b.input === "string" ? b.input : JSON.stringify(b.input ?? {}),
+        call_id: b.id,
+      });
+    }
+  }
+
+  // thinking → reasoning summary
+  let reasoningSeq = 0;
+  for (const b of res.content) {
+    if (b.type === "thinking" && b.thinking) {
+      output.push({
+        type: "reasoning",
+        id: `rs_${res.id}_${reasoningSeq++}`,
+        summary: [{ type: "summary_text", text: b.thinking }],
+      });
+    }
   }
 
   return {
@@ -58,9 +84,7 @@ export function canonicalToResponsesResponse(res: CanonicalResponse): ResponsesR
   };
 }
 
-function extractText(blocks: CanonicalContentBlock[]): string {
-  return blocks
-    .filter((b): b is { type: "text"; text: string } => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+// 现在不用了，但保留 reference（旧测试可能 import）
+export function _extractText(blocks: CanonicalContentBlock[]): string {
+  return blocks.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("");
 }

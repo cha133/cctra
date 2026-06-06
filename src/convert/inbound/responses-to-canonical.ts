@@ -1,7 +1,7 @@
 // ============================================================================
 // OpenAI Responses API → Canonical
-// v1 简化版：只处理 input 字符串/数组、tools、stream
-// 完整版要处理 previous_response_id、reasoning、truncation 等高级特性
+// 处理 input 字符串/数组、tools、stream、previous_response_id、reasoning
+// 跳过：5 个内置工具（web_search/code_interpreter/file_search/mcp/computer_use）
 // ============================================================================
 import type { CanonicalRequest, CanonicalMessage, CanonicalContentBlock, CanonicalTool } from "../../canonical/types";
 
@@ -26,6 +26,8 @@ interface ResponsesRequest {
   temperature?: number;
   top_p?: number;
   stream?: boolean;
+  previous_response_id?: string;
+  reasoning?: { effort?: "low" | "medium" | "high" };
 }
 
 export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
@@ -75,5 +77,7 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
     temperature: req.temperature,
     topP: req.top_p,
     stream: !!req.stream,
+    previousResponseId: req.previous_response_id,
+    reasoning: req.reasoning,
   };
 }

@@ -49,6 +49,7 @@ async function promptNewSubscription(): Promise<Subscription> {
       message: "Upstream API format:",
       options: [
         { value: "openai-chat", label: "OpenAI Chat Completions" },
+        { value: "openai-responses", label: "OpenAI Responses" },
         { value: "anthropic-messages", label: "Anthropic Messages" },
       ],
     }),

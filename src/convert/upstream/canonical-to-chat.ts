@@ -1,14 +1,18 @@
 // ============================================================================
 // Canonical → OpenAI Chat Completions 请求（发给上游用）
 // ============================================================================
-import type { CanonicalRequest, CanonicalContentBlock } from "../../canonical/types";
+import type { CanonicalRequest, CanonicalContentBlock, ImageSource } from "../../canonical/types";
 import { systemToString } from "../common/system-prompt";
+
+type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
 
 interface ChatUpstreamRequest {
   model: string;
   messages: Array<{
     role: "system" | "user" | "assistant" | "tool";
-    content: string | null;
+    content: string | null | ChatContentPart[];
     tool_call_id?: string;
     tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   }>;
@@ -18,6 +22,8 @@ interface ChatUpstreamRequest {
   top_p?: number;
   stop?: string[];
   stream: boolean;
+  // 兼容 reasoning_effort（OpenAI o-series / 兼容上游可识别）
+  reasoning_effort?: "low" | "medium" | "high";
 }
 
 export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequest {
@@ -42,8 +48,20 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
             });
           }
         }
+      } else if (userBlocks.some((b) => b.type === "image")) {
+        // 多模态：构造 OpenAI Chat content parts 数组
+        const parts: ChatContentPart[] = [];
+        for (const b of userBlocks) {
+          if (b.type === "text") {
+            parts.push({ type: "text", text: b.text });
+          } else if (b.type === "image") {
+            parts.push({ type: "image_url", image_url: { url: imageToDataUrl(b.source) } });
+          }
+          // document → OpenAI 兼容端点一般不支持，丢
+        }
+        messages.push({ role: "user", content: parts });
       } else {
-        // 普通 user：text / image blocks 合并成字符串（v1 简化：丢图片只留文本）
+        // 纯文本：合并成字符串
         const text = extractText(userBlocks);
         messages.push({ role: "user", content: text });
       }
@@ -77,7 +95,13 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
     top_p: req.topP,
     stop: req.stopSequences,
     stream: req.stream,
+    reasoning_effort: req.reasoning?.effort,
   };
+}
+
+function imageToDataUrl(src: ImageSource): string {
+  if (src.kind === "base64") return `data:${src.mediaType};base64,${src.data}`;
+  return src.data;
 }
 
 function extractText(blocks: CanonicalContentBlock[]): string {

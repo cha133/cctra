@@ -6,8 +6,7 @@ import { callUpstream, callUpstreamStream } from "../upstream";
 import { canonicalToResponsesResponse } from "../../convert/outbound/canonical-to-responses";
 import { responsesErrorBody } from "../error";
 import { resolveRoute } from "../../core/routing";
-import { chatStreamToCanonical } from "../../convert/streaming/inbound/chat-stream";
-import { responsesStreamToCanonical } from "../../convert/streaming/inbound/responses-stream";
+import { wrapWithKeepalive } from "../keepalive";
 import { loadConfigFile } from "../../core/config";
 import { logger } from "../../utils/logger";
 
@@ -36,20 +35,19 @@ export async function handleResponses(req: Request): Promise<Response> {
 
   if (canonical.stream) {
     try {
-      const { upstreamStream, formatChunk } = await callUpstreamStream({
+      const { upstreamStream, parser, format } = await callUpstreamStream({
         route,
         canonical,
         clientFormat: "openai-responses",
+        clientSignal: req.signal,
       });
-      // v1 简化：上游 stream 一律当 Chat SSE 解析
-      const cstream = chatStreamToCanonical(upstreamStream);
+      const cstream = parser(upstreamStream);
       const encoder = new TextEncoder();
-      const out = new ReadableStream({
+      const inner = new ReadableStream<Uint8Array>({
         async start(controller) {
           try {
             for await (const chunk of cstream) {
-              const s = formatChunk(chunk);
-              if (s) controller.enqueue(encoder.encode(s));
+              for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
             logger.error(`[responses:stream] error: ${(e as Error).message}`);
@@ -58,7 +56,7 @@ export async function handleResponses(req: Request): Promise<Response> {
           }
         },
       });
-      return new Response(out, {
+      return new Response(wrapWithKeepalive(inner), {
         headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
       });
     } catch (e) {
@@ -67,12 +65,11 @@ export async function handleResponses(req: Request): Promise<Response> {
   }
 
   try {
-    const upstreamRes = await callUpstream({ route, canonical, clientFormat: "openai-responses" });
+    const upstreamRes = await callUpstream({
+      route, canonical, clientFormat: "openai-responses", clientSignal: req.signal,
+    });
     return Response.json(canonicalToResponsesResponse(upstreamRes));
   } catch (e) {
     return Response.json(responsesErrorBody((e as Error).message), { status: 500 });
   }
 }
-
-// 抑制未用导入警告
-void responsesStreamToCanonical;

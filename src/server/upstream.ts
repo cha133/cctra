@@ -8,12 +8,19 @@ import { canonicalToChatUpstream } from "../convert/upstream/canonical-to-chat";
 import { canonicalToAnthropicUpstream } from "../convert/upstream/canonical-to-anthropic";
 import { parseChatUpstreamResponse } from "./chat-parser";
 import { parseAnthropicUpstreamResponse } from "./anthropic-parser";
+import { pickInboundStreamParser, type InboundStreamParser } from "../convert/streaming/inbound/pick";
+import { ChatStreamFormatter } from "../convert/streaming/outbound/format-chat";
+import { ResponsesStreamFormatter } from "../convert/streaming/outbound/format-responses";
+import { AnthropicStreamFormatter } from "../convert/streaming/outbound/format-anthropic";
+import { cancelableFetch } from "./cancelable-fetch";
 import { logger } from "../utils/logger";
 
 export interface UpstreamCallOptions {
   route: { source: Source; upstreamModelId: string; apiFormat: ApiFormat };
   canonical: CanonicalRequest;
   clientFormat: "openai-chat" | "openai-responses" | "anthropic-messages";
+  /** 客户端 req.signal；为 undefined 时只用上游 5min 硬超时 */
+  clientSignal?: AbortSignal;
 }
 
 /** 非流式上游调用 */
@@ -32,15 +39,14 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await cancelableFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...ready.authHeader,
       },
       body: JSON.stringify(upstreamBody),
-      signal: AbortSignal.timeout(60_000 * 5),
-    });
+    }, opts.clientSignal);
   } catch (e) {
     return makeError(opts.route.upstreamModelId, `network_error: ${(e as Error).message}`);
   }
@@ -57,10 +63,15 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
 }
 
 /** 流式上游调用 */
-export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<{
+export interface UpstreamStream {
   upstreamStream: ReadableStream<Uint8Array>;
-  formatChunk: (chunk: CanonicalChunk) => string;
-}> {
+  /** 按 ready.apiFormat（真实上游协议）选 inbound 解析器 */
+  parser: InboundStreamParser;
+  /** 按 clientFormat 选输出格式化器；返回 0+ SSE 行（含 \n\n） */
+  format: (chunk: CanonicalChunk) => string[];
+}
+
+export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<UpstreamStream> {
   const ready = await resolveUpstream(opts.route);
   if (!ready) throw new Error("plugin_returned_no_config");
 
@@ -71,28 +82,31 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<{
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream:stream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
 
-  const res = await fetch(url, {
+  const res = await cancelableFetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...ready.authHeader,
     },
     body: JSON.stringify(upstreamBody),
-    signal: AbortSignal.timeout(60_000 * 5),
-  });
+  }, opts.clientSignal);
 
   if (!res.ok || !res.body) {
     const text = res.body ? await res.text() : `upstream_${res.status}`;
     throw new Error(text.slice(0, 500));
   }
 
+  // 关键：parser 用 ready.apiFormat（plugin 真实返回），不是 route.apiFormat（plugin 占位）
+  const parser = pickInboundStreamParser(ready.apiFormat);
+
+  const formatter = opts.clientFormat === "openai-chat" ? new ChatStreamFormatter()
+    : opts.clientFormat === "openai-responses" ? new ResponsesStreamFormatter()
+    : new AnthropicStreamFormatter();
+
   return {
     upstreamStream: res.body,
-    formatChunk: (chunk: CanonicalChunk): string => {
-      if (opts.clientFormat === "openai-chat") return formatChatChunk(chunk);
-      if (opts.clientFormat === "openai-responses") return formatResponsesChunk(chunk);
-      return formatAnthropicChunk(chunk);
-    },
+    parser,
+    format: (chunk) => formatter.format(chunk),
   };
 }
 
@@ -145,57 +159,6 @@ async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<Rea
     logger.error(`[plugin:${source.name}] getConfig failed: ${(e as Error).message}`);
     return null;
   }
-}
-
-// ============================================================================
-// 流式客户端格式输出
-// ============================================================================
-
-function formatChatChunk(chunk: CanonicalChunk): string {
-  if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
-    return `data: ${JSON.stringify({
-      id: "chatcmpl-stream",
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: "",
-      choices: [{ index: 0, delta: { content: chunk.delta.text }, finish_reason: null }],
-    })}\n\n`;
-  }
-  if (chunk.type === "message_delta" && chunk.delta.stop_reason) {
-    return `data: ${JSON.stringify({
-      id: "chatcmpl-stream",
-      object: "chat.completion.chunk",
-      created: Math.floor(Date.now() / 1000),
-      model: "",
-      choices: [{ index: 0, delta: {}, finish_reason: mapStopReason(chunk.delta.stop_reason) }],
-    })}\n\n`;
-  }
-  if (chunk.type === "message_stop") return "data: [DONE]\n\n";
-  return "";
-}
-
-function formatResponsesChunk(chunk: CanonicalChunk): string {
-  if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
-    return `data: ${JSON.stringify({
-      type: "response.output_text.delta",
-      delta: chunk.delta.text,
-    })}\n\n`;
-  }
-  if (chunk.type === "message_stop") {
-    return `data: ${JSON.stringify({ type: "response.completed" })}\n\ndata: [DONE]\n\n`;
-  }
-  return "";
-}
-
-function formatAnthropicChunk(chunk: CanonicalChunk): string {
-  return `data: ${JSON.stringify(chunk)}\n\n`;
-}
-
-function mapStopReason(r: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | "error"): string {
-  if (r === "max_tokens") return "length";
-  if (r === "tool_use") return "tool_calls";
-  if (r === "error") return "content_filter";
-  return "stop";
 }
 
 function makeError(model: string, msg: string): CanonicalResponse {

@@ -16,13 +16,17 @@ interface AnthropicUpstreamRequest {
   top_p?: number;
   stop_sequences?: string[];
   stream: boolean;
+  // 让 Anthropic thinking 模型按 effort 估算预算（粗略映射）
+  thinking?: { type: "enabled"; budget_tokens: number };
 }
 
 type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string } }
+  | { type: "document"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string } }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
+  | { type: "thinking"; thinking: string; signature?: string };
 
 export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUpstreamRequest {
   const messages: AnthropicUpstreamRequest["messages"] = req.messages.map((m) => ({
@@ -46,7 +50,16 @@ export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUp
     top_p: req.topP,
     stop_sequences: req.stopSequences,
     stream: req.stream,
+    thinking: req.reasoning?.effort ? { type: "enabled", budget_tokens: effortToBudget(req.reasoning.effort) } : undefined,
   };
+}
+
+function effortToBudget(effort: "low" | "medium" | "high"): number {
+  switch (effort) {
+    case "low": return 1024;
+    case "medium": return 4096;
+    case "high": return 16_384;
+  }
 }
 
 function blockToAnthropic(b: CanonicalContentBlock): AnthropicContentBlock {
@@ -58,6 +71,11 @@ function blockToAnthropic(b: CanonicalContentBlock): AnthropicContentBlock {
       if (src.kind === "base64") return { type: "image", source: { type: "base64", media_type: src.mediaType, data: src.data } };
       return { type: "image", source: { type: "url", media_type: src.mediaType, url: src.data } };
     }
+    case "document": {
+      const src = b.source;
+      if (src.kind === "base64") return { type: "document", source: { type: "base64", media_type: src.mediaType, data: src.data } };
+      return { type: "document", source: { type: "url", media_type: src.mediaType, url: src.data } };
+    }
     case "tool_use":
       return { type: "tool_use", id: b.id, name: b.name, input: b.input };
     case "tool_result":
@@ -68,10 +86,10 @@ function blockToAnthropic(b: CanonicalContentBlock): AnthropicContentBlock {
         is_error: b.isError,
       };
     case "thinking":
-      // 透传 thinking（如果有 signature）
-      return { type: "text", text: b.thinking }; // 简化：thinking 转 text
-    case "document":
-      // v1 简化：document 暂时转成 text
-      return { type: "text", text: `[document: ${b.source.kind === "url" ? b.source.data : "base64 data"}]` };
+      // 原生 thinking block + 透传 signature（如果有）
+      return { type: "thinking", thinking: b.thinking, ...(b.signature ? { signature: b.signature } : {}) };
+    case "refusal":
+      // Anthropic 无 refusal block；降级为加前缀的 text
+      return { type: "text", text: `[refusal] ${b.refusal}` };
   }
 }
