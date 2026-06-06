@@ -6,7 +6,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { logger } from "../utils/logger";
+import { info } from "../ui/format";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -18,5 +18,5 @@ export async function startDaemon(): Promise<void> {
     windowsHide: true,
   });
   child.unref();
-  logger.info(`cctra daemon started, pid=${child.pid}`);
+  info(`started (pid=${child.pid})`);
 }

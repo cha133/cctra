@@ -7,11 +7,11 @@ import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginConfig, Config } from "../types";
 import type { UpstreamPlugin } from "./contract";
-import { logger } from "../utils/logger";
+import { info, error as errorOut } from "../ui/format";
 
 const moduleCache = new Map<string, UpstreamPlugin>();
 
-/** 加载并缓存插件 */
+/** 加载并缓存插件。CLI 一次性操作，输出走 format（stdout/stderr）给用户看。 */
 export async function loadPlugin(plugin: PluginConfig, _config: Config): Promise<UpstreamPlugin | null> {
   if (moduleCache.has(plugin.path)) {
     return moduleCache.get(plugin.path)!;
@@ -21,7 +21,7 @@ export async function loadPlugin(plugin: PluginConfig, _config: Config): Promise
   try {
     statSync(plugin.path);
   } catch {
-    logger.error(`[plugin:${plugin.name}] file not found: ${plugin.path}`);
+    errorOut(`[plugin:${plugin.name}] file not found: ${plugin.path}`);
     return null;
   }
 
@@ -36,10 +36,10 @@ export async function loadPlugin(plugin: PluginConfig, _config: Config): Promise
       instance.name = plugin.name;
     }
     moduleCache.set(plugin.path, instance);
-    logger.info(`[plugin:${plugin.name}] loaded from ${plugin.path}`);
+    info(`[plugin:${plugin.name}] loaded from ${plugin.path}`);
     return instance;
   } catch (e) {
-    logger.error(`[plugin:${plugin.name}] failed to import: ${(e as Error).message}`);
+    errorOut(`[plugin:${plugin.name}] failed to import: ${(e as Error).message}`);
     return null;
   }
 }

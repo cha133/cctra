@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { daemonLogPath } from "../../utils/paths";
-import { logger } from "../../utils/logger";
+import { info } from "../../ui/format";
 
 const PLIST_LABEL = "com.cctra.daemon";
 const PLIST_PATH = join(homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
@@ -20,19 +20,20 @@ export function installMacOS(daemonEntrypoint: string, bunPath: string = "/usr/b
   mkdirSync(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
   const plist = generatePlist(daemonEntrypoint, bunPath);
   writeFileSync(PLIST_PATH, plist, "utf-8");
-  logger.info(`[macos] wrote plist to ${PLIST_PATH}`);
+  info(`wrote plist to ${PLIST_PATH}`);
 
   // 用 modern bootstrap 语法（避免 Apple Silicon deprecation warning）
   const uid = process.getuid?.() ?? execSync("id -u").toString().trim();
   try {
     execSync(`launchctl bootstrap gui/${uid} "${PLIST_PATH}"`, { stdio: "pipe" });
-    logger.info(`[macos] bootstrapped ${PLIST_LABEL}`);
+    info(`bootstrapped ${PLIST_LABEL}`);
   } catch (e) {
     // 可能已存在，先 bootout 再 bootstrap
     try {
       execSync(`launchctl bootout gui/${uid}/${PLIST_LABEL}`, { stdio: "pipe" });
     } catch { /* ignore */ }
     execSync(`launchctl bootstrap gui/${uid} "${PLIST_PATH}"`, { stdio: "pipe" });
+    info(`bootstrapped ${PLIST_LABEL}`);
   }
 }
 

@@ -4,7 +4,7 @@
 // ============================================================================
 import { execSync } from "node:child_process";
 import { loadConfigFile } from "../core/config";
-import { logger } from "../utils/logger";
+import { info } from "../ui/format";
 
 export async function stopDaemon(): Promise<void> {
   const port = loadConfigFile().port;
@@ -25,7 +25,7 @@ export async function stopDaemon(): Promise<void> {
     for (const pid of pids) {
       try {
         execSync(`taskkill /F /PID ${pid}`, { stdio: "pipe" });
-        logger.info(`[stop] killed pid ${pid}`);
+        info(`killed pid ${pid}`);
       } catch (e) {
         throw new Error(`taskkill /F /PID ${pid} failed: ${(e as Error).message}`);
       }
@@ -50,7 +50,7 @@ export async function stopDaemon(): Promise<void> {
   for (const pid of pids) {
     try {
       execSync(`kill -TERM ${pid}`, { stdio: "pipe" });
-      logger.info(`[stop] killed pid ${pid}`);
+      info(`killed pid ${pid}`);
     } catch (e) {
       throw new Error(`kill -TERM ${pid} failed: ${(e as Error).message}`);
     }

@@ -4,7 +4,6 @@
 import { installWindows, isInstalledWindows, uninstallWindows } from "./platform/windows";
 import { installMacOS, isInstalledMacOS, uninstallMacOS } from "./platform/macos";
 import { installLinux, isInstalledLinux, uninstallLinux } from "./platform/linux";
-import { logger } from "../utils/logger";
 
 export interface InstallOptions {
   /** 启动器 .exe 路径（Windows 专用） */
@@ -27,7 +26,7 @@ export function install(opts: InstallOptions): void {
   } else {
     throw new Error(`Unsupported platform: ${platform}`);
   }
-  logger.info(`cctra daemon installed for ${platform}`);
+  // 顶层不写 logger.info —— 外层 commands/daemon.ts 已有 success() 友好提示
 }
 
 export function uninstall(): void {
@@ -36,7 +35,7 @@ export function uninstall(): void {
   else if (platform === "darwin") uninstallMacOS();
   else if (platform === "linux") uninstallLinux();
   else throw new Error(`Unsupported platform: ${platform}`);
-  logger.info(`cctra daemon uninstalled from ${platform}`);
+  // 顶层不写 logger.info —— 外层 commands/daemon.ts 已有 success() 友好提示
 }
 
 export function isInstalled(): boolean {

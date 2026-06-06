@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { daemonLogPath } from "../../utils/paths";
-import { logger } from "../../utils/logger";
+import { info } from "../../ui/format";
 
 const UNIT_NAME = "cctra.service";
 const UNIT_PATH = join(homedir(), ".config", "systemd", "user", UNIT_NAME);
@@ -19,12 +19,12 @@ export function installLinux(daemonEntrypoint: string, bunPath: string = "/usr/b
   mkdirSync(join(homedir(), ".config", "systemd", "user"), { recursive: true });
   const unit = generateUnit(daemonEntrypoint, bunPath);
   writeFileSync(UNIT_PATH, unit, "utf-8");
-  logger.info(`[linux] wrote unit to ${UNIT_PATH}`);
+  info(`wrote unit to ${UNIT_PATH}`);
 
   try {
     execSync("systemctl --user daemon-reload", { stdio: "pipe" });
     execSync("systemctl --user enable --now cctra.service", { stdio: "pipe" });
-    logger.info(`[linux] enabled and started cctra.service`);
+    info(`enabled and started ${UNIT_NAME}`);
   } catch (e) {
     throw new Error(`systemctl failed: ${(e as Error).message}`);
   }

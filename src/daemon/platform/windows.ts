@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { ensureCctraDir, windowsLauncherPath } from "../../utils/paths";
-import { logger } from "../../utils/logger";
+import { info } from "../../ui/format";
 
 const REG_KEY = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`;
 const REG_NAME = "cctra";
@@ -25,13 +25,13 @@ export function installWindows(bundledLauncherPath: string): void {
     throw new Error(`Bundled launcher not found: ${bundledLauncherPath}. Build it first with scripts/build-launcher.ps1`);
   }
   copyFileSync(bundledLauncherPath, dest);
-  logger.info(`[windows] copied launcher to ${dest}`);
+  info(`copied launcher to ${dest}`);
 
   // 写注册表（HKCU 不需要管理员）
   const cmd = `reg add "${REG_KEY}" /v ${REG_NAME} /t REG_SZ /d "\"${dest}\"" /f`;
   try {
     execSync(cmd, { stdio: "pipe" });
-    logger.info(`[windows] registered ${REG_NAME} in ${REG_KEY}`);
+    info(`registered ${REG_NAME} in ${REG_KEY}`);
   } catch (e) {
     throw new Error(`Failed to register Run key: ${(e as Error).message}`);
   }
@@ -42,17 +42,18 @@ export function uninstallWindows(): void {
 
   try {
     execSync(`reg delete "${REG_KEY}" /v ${REG_NAME} /f`, { stdio: "pipe" });
-    logger.info(`[windows] removed ${REG_NAME} from ${REG_KEY}`);
+    info(`removed ${REG_NAME} from ${REG_KEY}`);
   } catch {
-    // 没注册过，忽略
+    // 没注册过，跳过
   }
 
   const dest = windowsLauncherPath();
   if (existsSync(dest)) {
     try {
       execSync(`del /f "${dest}"`, { stdio: "pipe" });
+      info(`removed launcher ${dest}`);
     } catch {
-      // ignore
+      // 删不掉（文件被占用等）不阻塞
     }
   }
 }
