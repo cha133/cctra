@@ -22,10 +22,13 @@ interface ModelCacheEntry {
 const memoryCache = new Map<string, ModelCacheEntry>();
 
 const DEFAULT_TTL = 24 * 60 * 60 * 1000; // 24h
+const OPENROUTER_FALLBACK = "https://openrouter.ai/api/v1/models";
 
 /**
- * 从上游拉模型列表（带 3 层缓存）
- * v1 简化版：只支持 OpenAI 兼容的 /v1/models 端点
+ * 从上游拉模型列表（带 3 层缓存 + OpenRouter fallback）
+ * 1. 试上游 endpoint 的 /v1/models
+ * 2. 失败 → fallback 到 OpenRouter（去 :free 后缀 + 去 provider 前缀）
+ * 3. 网络都失败 → 返回空数组（add wizard 会用手动输入 fallback）
  */
 export async function fetchUpstreamModels(opts: FetchModelsOptions): Promise<string[]> {
   const ttl = opts.ttlMs ?? DEFAULT_TTL;
@@ -52,21 +55,17 @@ export async function fetchUpstreamModels(opts: FetchModelsOptions): Promise<str
     }
   }
 
-  // L3: 网络
-  let models: string[] = [];
-  try {
-    const url = joinUrl(opts.endpoint, path);
-    const headers: Record<string, string> = {};
-    if (opts.apiFormat === "openai-chat" || opts.apiFormat === "openai-responses" || opts.apiFormat === "anthropic-messages") {
-      if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
-    }
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      const body = await res.json() as { data?: Array<{ id: string }> };
-      models = (body.data ?? []).map((m) => m.id);
-    }
-  } catch {
-    // 网络失败：返回空数组
+  // L3: 网络 — 先试上游
+  const url = joinUrl(opts.endpoint, path);
+  const headers: Record<string, string> = {};
+  if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
+
+  let models = await tryFetchModels(url, headers);
+
+  // L4: Fallback 到 OpenRouter
+  if (models.length === 0) {
+    const fallback = await tryFetchModels(OPENROUTER_FALLBACK, {});
+    models = sanitizeOpenRouterModels(fallback);
   }
 
   // 回写缓存
@@ -84,6 +83,35 @@ export async function fetchUpstreamModels(opts: FetchModelsOptions): Promise<str
     // ignore
   }
   return models;
+}
+
+/**
+ * 拉单个端点的 models（无 auth header 因为 OpenRouter fallback 不带 token）
+ */
+async function tryFetchModels(url: string, headers: Record<string, string>): Promise<string[]> {
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const body = await res.json() as { data?: Array<{ id: string }> };
+      return (body.data ?? []).map((m) => m.id);
+    }
+  } catch {
+    // 网络/超时失败
+  }
+  return [];
+}
+
+/**
+ * 清理 OpenRouter 返回的模型名（抄 ccswi 规则）
+ * - 去掉 :free 后缀
+ * - 去掉 provider 前缀（org/model → model）
+ */
+function sanitizeOpenRouterModels(models: string[]): string[] {
+  return models.flatMap((id) => {
+    if (id.endsWith(":free")) return [];
+    const slashIdx = id.indexOf("/");
+    return slashIdx > 0 ? [id.slice(slashIdx + 1)] : [id];
+  });
 }
 
 function joinUrl(base: string, path: string): string {

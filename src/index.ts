@@ -13,7 +13,7 @@ import { registerTier } from "./commands/tier";
 import { registerDaemon } from "./commands/daemon";
 import { registerServe } from "./commands/serve";
 
-const VERSION = "0.1.0";
+const VERSION = "0.3.0";
 
 const program = new Command();
 program

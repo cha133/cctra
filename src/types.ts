@@ -33,6 +33,7 @@ export type { ApiFormat } from "./canonical/types";
 
 export interface Subscription extends Source {
   kind: "subscription";
+  vendor?: string;                // 来源 vendor 名（仅显示用，不影响路由）
   endpoint: string;
   token: string;
   apiFormat: ApiFormat;

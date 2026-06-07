@@ -27,8 +27,9 @@ export function registerLs(program: Command): void {
             const marker = green("*");
             const index = dim(`${i + 1}.`);
             const name = green(sub.name);
+            const vendorPart = sub.vendor ? ` ${dim(`[${sub.vendor}]`)}` : "";
             const meta = ` ${dim(`(${sub.apiFormat}, ${sub.models.length} model${sub.models.length === 1 ? "" : "s"})`)}`;
-            console.log(`${marker} ${index} ${name}${meta}`);
+            console.log(`${marker} ${index} ${name}${vendorPart}${meta}`);
           }
         }
 

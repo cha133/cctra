@@ -8,6 +8,16 @@ import { success, error as errorOut, info } from "../ui/format";
 import { withConfig } from "./shared";
 import { addSubscription } from "../core/config";
 import { fetchUpstreamModels } from "../core/model-fetch";
+import {
+  API_FORMAT_LABELS,
+  getEndpointForFormat,
+  getPresetHint,
+  getSupportedApiFormats,
+  getVendorChoices,
+  generateProfileName,
+  NO_VENDOR,
+  type ProviderPreset,
+} from "../providers/presets";
 import type { Subscription, ApiFormat } from "../types";
 
 export function registerAdd(program: Command): void {
@@ -29,10 +39,26 @@ export function registerAdd(program: Command): void {
 }
 
 async function promptNewSubscription(): Promise<Subscription> {
-  // 1. 名称
+  // 1. Vendor（可跳过 → 走纯手输）
+  const vendor = checkCancel(
+    await p.autocomplete<ProviderPreset>({
+      message: "Select a vendor (type to search, or pick '(不使用供应商)' for custom):",
+      options: getVendorChoices().map((v) => ({
+        value: v,
+        label: v.name,
+        hint: getPresetHint(v),
+      })),
+      placeholder: "Type to filter vendors...",
+    }),
+  );
+  const isCustom = vendor.name === NO_VENDOR.name;
+
+  // 2. 名称（vendor 选中时自动从 vendor.name 生成）
+  const defaultName = isCustom ? "" : generateProfileName(vendor.name);
   const name = checkCancel(
     await p.text({
       message: "Subscription name:",
+      initialValue: defaultName,
       placeholder: "e.g. ark-agent-plan, deepseek",
       validate: (v) => {
         if (!v?.trim()) return "Name is required.";
@@ -43,28 +69,35 @@ async function promptNewSubscription(): Promise<Subscription> {
     }),
   );
 
-  // 2. 协议
+  // 3. 协议（vendor 选中时只显示该 preset 支持的协议）
+  const supportedFormats = getSupportedApiFormats(vendor);
   const apiFormat = checkCancel(
     await p.select<ApiFormat>({
       message: "Upstream API format:",
-      options: [
-        { value: "openai-chat", label: "OpenAI Chat Completions" },
-        { value: "openai-responses", label: "OpenAI Responses" },
-        { value: "anthropic-messages", label: "Anthropic Messages" },
-      ],
+      initialValue: supportedFormats[0],
+      options: supportedFormats.map((format) => ({
+        value: format,
+        label: API_FORMAT_LABELS[format],
+      })),
     }),
   );
 
-  // 3. Endpoint
+  // 4. Endpoint（vendor 选中时按协议预填）
   const endpoint = checkCancel(
     await p.text({
       message: "Endpoint URL (root, no /v1 suffix):",
+      initialValue: getEndpointForFormat(vendor, apiFormat),
       placeholder: "e.g. https://ark.cn-beijing.volces.com/api/plan",
       validate: (v) => (!v?.trim() ? "Endpoint is required." : undefined),
     }),
   );
 
-  // 4. Token
+  // 4.5 提示 vendor 备注（如有）
+  if (vendor.notes && !isCustom) {
+    info(`Note: ${vendor.notes}`);
+  }
+
+  // 5. Token
   const token = checkCancel(
     await p.password({
       message: "API key / token:",
@@ -72,7 +105,7 @@ async function promptNewSubscription(): Promise<Subscription> {
     }),
   );
 
-  // 5. 拉模型列表
+  // 6. 拉模型列表
   const s = p.spinner();
   s.start("Fetching model list from upstream...");
   let modelNames: string[] = [];
@@ -87,7 +120,7 @@ async function promptNewSubscription(): Promise<Subscription> {
     s.stop("Failed to fetch models, will add manually.");
   }
 
-  // 6. 选模型
+  // 7. 选模型
   let selected: string[] = [];
   if (modelNames.length > 0) {
     const result = checkCancel(
@@ -113,6 +146,7 @@ async function promptNewSubscription(): Promise<Subscription> {
 
   return {
     kind: "subscription",
+    vendor: isCustom ? undefined : vendor.name,
     name: name.trim().toLowerCase(),
     endpoint: endpoint.trim(),
     token: token.trim(),

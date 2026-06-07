@@ -126,6 +126,10 @@ Plugin configs go in `~/.cctra/plugins/<name>/config.json`.
 - `src/daemon/` — cross-platform install (Windows registry / macOS LaunchAgent / Linux systemd)
 - `launcher/` — tiny Rust .exe for Windows startup (hides console, registers in Task Manager)
 
+## Credits
+
+The vendor preset list (`src/providers/presets.ts`) — provider names and endpoint URLs — is derived from [cc-switch](https://github.com/farion1231/cc-switch) (MIT, Copyright (c) 2025 Jason Young). Thanks to Jason and the cc-switch contributors for maintaining this comprehensive registry.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

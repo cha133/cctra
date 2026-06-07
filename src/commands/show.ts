@@ -21,6 +21,9 @@ export function registerShow(program: Command): void {
 
         console.log(bold(`${s.name}`) + `  ${dim(`(${s.kind})`)}`);
         if (isSubscription(s)) {
+          if (s.vendor) {
+            console.log(`  ${dim("vendor:")}    ${s.vendor}`);
+          }
           console.log(`  ${dim("endpoint:")}  ${s.endpoint}`);
           console.log(`  ${dim("token:")}     ${maskToken(s.token)}`);
           console.log(`  ${dim("format:")}    ${s.apiFormat}`);
