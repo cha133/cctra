@@ -12,14 +12,13 @@ import { registerPlugin } from "./commands/plugin";
 import { registerTier } from "./commands/tier";
 import { registerDaemon } from "./commands/daemon";
 import { registerServe } from "./commands/serve";
-
-const VERSION = "0.3.0";
+import pkg from "../package.json";
 
 const program = new Command();
 program
   .name("cctra")
   .description("Local LLM subscription protocol converter + plugin host")
-  .version(VERSION, "-v, --version");
+  .version(pkg.version, "-v, --version");
 
 registerAdd(program);
 registerLs(program);
