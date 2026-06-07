@@ -12,9 +12,4 @@ if (-not (Test-Path "bin/cctra")) {
     Copy-Item -Force bin/cctra.js bin/cctra
 }
 
-Write-Host ""
-Write-Host "[publish] about to run: npm publish --access public" -ForegroundColor Yellow
-Write-Host "[publish] press Ctrl-C within 5s to abort..." -ForegroundColor Yellow
-Start-Sleep -Seconds 5
-
 npm publish --access public
