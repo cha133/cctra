@@ -1,6 +1,6 @@
 {
   "name": "cctra",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local LLM subscription protocol converter + plugin host. Run a daemon on 127.0.0.1:3133 that translates between OpenAI Chat / OpenAI Responses / Anthropic Messages, with a tier-based model aliasing system and local-path plugin support.",
   "type": "module",
   "bin": {
@@ -11,14 +11,16 @@
     "src/",
     "examples/",
     "README.md",
-    "CLAUDE.md",
     "LICENSE"
   ],
   "scripts": {
     "dev": "bun run src/index.ts",
     "serve": "bun run src/index.ts serve",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "verify": "bunx tsc --noEmit && bun test",
+    "package": "pwsh -ExecutionPolicy Bypass -File scripts/package.ps1",
+    "release": "pwsh -ExecutionPolicy Bypass -File scripts/publish.ps1"
   },
   "engines": {
     "bun": ">=1.0.0"
