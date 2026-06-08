@@ -36,35 +36,43 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
 
   for (const m of req.messages) {
     if (m.role === "user") {
-      const userBlocks = m.content;
-      // 检查是否全是 tool_result
-      const toolResults = userBlocks.filter((b) => b.type === "tool_result");
-      if (toolResults.length > 0 && toolResults.length === userBlocks.length) {
-        for (const tr of toolResults) {
-          if (tr.type === "tool_result") {
-            messages.push({
-              role: "tool",
-              content: typeof tr.content === "string" ? tr.content : "",
-              tool_call_id: tr.toolUseId,
-            });
-          }
+      // 遍历 user 消息的所有 block：
+      //   - tool_result 立即 push 成 role:"tool" 消息（保证紧跟在前一条 assistant tool_calls 之后）
+      //   - text 累积成单一字符串，image 进 contentParts
+      // 循环结束后再 push 累积的 user 消息
+      // → output 顺序是 [...tool_msgs, user_msg]，符合 OpenAI Chat 协议
+      // 修前 bug：mixed text+tool_result 时旧三分支的"纯文本"else 会吞掉 tool_result
+      let textAccum = "";
+      const contentParts: ChatContentPart[] = [];
+      const toolMessages: ChatUpstreamRequest["messages"] = [];
+      for (const b of m.content) {
+        if (b.type === "tool_result") {
+          // 顺带修一个 latent bug：array-form content 之前会被压成 ""，现在扁平化为 text
+          const text = typeof b.content === "string" ? b.content : extractText(b.content);
+          const content = b.isError ? `[error] ${text}` : text;
+          toolMessages.push({
+            role: "tool",
+            content,
+            tool_call_id: b.toolUseId,
+          });
+        } else if (b.type === "text" && b.text) {
+          textAccum += b.text;
+        } else if (b.type === "image") {
+          contentParts.push({ type: "image_url", image_url: { url: imageToDataUrl(b.source) } });
         }
-      } else if (userBlocks.some((b) => b.type === "image")) {
-        // 多模态：构造 OpenAI Chat content parts 数组
-        const parts: ChatContentPart[] = [];
-        for (const b of userBlocks) {
-          if (b.type === "text") {
-            parts.push({ type: "text", text: b.text });
-          } else if (b.type === "image") {
-            parts.push({ type: "image_url", image_url: { url: imageToDataUrl(b.source) } });
-          }
-          // document → OpenAI 兼容端点一般不支持，丢
+        // document / thinking / refusal / tool_use 不应出现在 user 消息里，忽略
+      }
+      messages.push(...toolMessages);
+      // 拼回累积的 text 和 image：纯文本时合成 string（更紧凑），有 image 时用 content parts 数组
+      if (textAccum || contentParts.length > 0) {
+        if (contentParts.length === 0) {
+          messages.push({ role: "user", content: textAccum });
+        } else {
+          const parts: ChatContentPart[] = [];
+          if (textAccum) parts.push({ type: "text", text: textAccum });
+          parts.push(...contentParts);
+          messages.push({ role: "user", content: parts });
         }
-        messages.push({ role: "user", content: parts });
-      } else {
-        // 纯文本：合并成字符串
-        const text = extractText(userBlocks);
-        messages.push({ role: "user", content: text });
       }
     } else if (m.role === "assistant") {
       const text = extractText(m.content);

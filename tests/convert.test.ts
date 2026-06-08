@@ -8,6 +8,7 @@
 import { describe, test, expect } from "bun:test";
 import { chatToCanonical } from "../src/convert/inbound/chat-to-canonical";
 import { anthropicToCanonical } from "../src/convert/inbound/anthropic-to-canonical";
+import { responsesToCanonical } from "../src/convert/inbound/responses-to-canonical";
 import { canonicalToChatUpstream } from "../src/convert/upstream/canonical-to-chat";
 import { canonicalToAnthropicUpstream } from "../src/convert/upstream/canonical-to-anthropic";
 import { canonicalToChatResponse } from "../src/convert/outbound/canonical-to-chat";
@@ -91,6 +92,73 @@ describe("Anthropic → Canonical", () => {
   });
 });
 
+describe("Responses → Canonical", () => {
+  test("function_call → assistant with tool_use", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [{ type: "function_call", call_id: "c1", name: "f", arguments: '{"x":1}' }],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages[0]).toEqual({
+      role: "assistant",
+      content: [{ type: "tool_use", id: "c1", name: "f", input: { x: 1 } }],
+    });
+  });
+
+  test("function_call 缺 call_id 时 fallback 到 id", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [{ type: "function_call", id: "c2", name: "f", arguments: "{}" }],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages[0]?.content[0]).toEqual({ type: "tool_use", id: "c2", name: "f", input: {} });
+  });
+
+  test("function_call_output → user with tool_result", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [{ type: "function_call_output", call_id: "c1", output: "42" }],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages[0]).toEqual({
+      role: "user",
+      content: [{ type: "tool_result", toolUseId: "c1", content: "42" }],
+    });
+  });
+
+  test("message + function_call + function_call_output 混合，顺序保持", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [
+        { type: "message", role: "user", content: "Q" },
+        { type: "function_call", call_id: "c1", name: "f", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "42" },
+      ],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages).toHaveLength(3);
+    expect(can.messages[0]?.content[0]).toEqual({ type: "text", text: "Q" });
+    expect(can.messages[1]?.content[0]).toEqual({ type: "tool_use", id: "c1", name: "f", input: {} });
+    expect(can.messages[2]?.content[0]).toEqual({ type: "tool_result", toolUseId: "c1", content: "42" });
+  });
+
+  test("output_text / refusal 往返不丢", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "Hi" }] },
+        { type: "message", role: "assistant", content: [{ type: "refusal", refusal: "nope" }] },
+      ],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages[0]?.content[0]).toEqual({ type: "text", text: "Hi" });
+    expect(can.messages[1]?.content[0]).toEqual({ type: "refusal", refusal: "nope" });
+  });
+
+  test("未知 type 静默跳，不崩", () => {
+    const can = responsesToCanonical({
+      model: "x",
+      input: [{ type: "web_search_call", query: "x" } as never],
+    } as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages).toHaveLength(0);
+  });
+});
+
 describe("Canonical → Chat Upstream", () => {
   test("round-trip preserves text", () => {
     const can = chatToCanonical({
@@ -107,6 +175,97 @@ describe("Canonical → Chat Upstream", () => {
     expect(upstream.max_tokens).toBe(100);
     expect(upstream.messages[0]).toEqual({ role: "system", content: "you are helpful" });
     expect(upstream.messages[1]).toEqual({ role: "user", content: "hello" });
+  });
+
+  test("mixed text + tool_result: text 累积到末尾，tool 消息先发", () => {
+    const can = {
+      model: "x",
+      messages: [
+        {
+          role: "assistant" as const,
+          content: [{ type: "tool_use" as const, id: "a", name: "f", input: {} }],
+        },
+        {
+          role: "user" as const,
+          content: [
+            { type: "text" as const, text: "Q1" },
+            { type: "tool_result" as const, toolUseId: "a", content: "r1" },
+            { type: "tool_result" as const, toolUseId: "b", content: "r2" },
+            { type: "text" as const, text: "Q2" },
+          ],
+        },
+      ],
+    } as Parameters<typeof canonicalToChatUpstream>[0];
+    const out = canonicalToChatUpstream(can);
+    expect(out.messages).toEqual([
+      { role: "assistant", content: null, tool_calls: [{ id: "a", type: "function", function: { name: "f", arguments: "{}" } }] },
+      { role: "tool", content: "r1", tool_call_id: "a" },
+      { role: "tool", content: "r2", tool_call_id: "b" },
+      { role: "user", content: "Q1Q2" },
+    ]);
+  });
+
+  test("mixed multimodal + tool_result: image 进 user 消息，tool 消息单独发", () => {
+    const can = {
+      model: "x",
+      messages: [
+        {
+          role: "user" as const,
+          content: [
+            { type: "text" as const, text: "看这张图" },
+            { type: "image" as const, source: { kind: "url" as const, mediaType: "image/png", data: "http://x" } },
+            { type: "tool_result" as const, toolUseId: "a", content: "ok" },
+          ],
+        },
+      ],
+    } as Parameters<typeof canonicalToChatUpstream>[0];
+    const out = canonicalToChatUpstream(can);
+    expect(out.messages).toHaveLength(2);
+    expect(out.messages[0]).toEqual({ role: "tool", content: "ok", tool_call_id: "a" });
+    expect(out.messages[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "看这张图" },
+        { type: "image_url", image_url: { url: "http://x" } },
+      ],
+    });
+  });
+
+  test("tool_result 数组 content 扁平化为字符串（不再变空串）", () => {
+    const can = {
+      model: "x",
+      messages: [
+        {
+          role: "user" as const,
+          content: [
+            {
+              type: "tool_result" as const,
+              toolUseId: "a",
+              content: [
+                { type: "text" as const, text: "line1" },
+                { type: "text" as const, text: "line2" },
+              ],
+            },
+          ],
+        },
+      ],
+    } as Parameters<typeof canonicalToChatUpstream>[0];
+    const out = canonicalToChatUpstream(can);
+    expect(out.messages[0]).toEqual({ role: "tool", content: "line1line2", tool_call_id: "a" });
+  });
+
+  test("tool_result.isError 加 [error] 前缀", () => {
+    const can = {
+      model: "x",
+      messages: [
+        {
+          role: "user" as const,
+          content: [{ type: "tool_result" as const, toolUseId: "a", content: "boom", isError: true }],
+        },
+      ],
+    } as Parameters<typeof canonicalToChatUpstream>[0];
+    const out = canonicalToChatUpstream(can);
+    expect(out.messages[0]).toEqual({ role: "tool", content: "[error] boom", tool_call_id: "a" });
   });
 });
 
