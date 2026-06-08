@@ -3,6 +3,7 @@ node_modules/
 
 # handover doc (out-of-git, for personal use)
 TODO.md
+local-doc/
 
 # Rust launcher build output (committed Cargo.lock for reproducible builds)
 launcher/target/
