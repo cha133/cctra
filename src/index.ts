@@ -10,7 +10,6 @@ import { registerRename } from "./commands/rename";
 import { registerModel } from "./commands/model";
 import { registerPlugin } from "./commands/plugin";
 import { registerTier } from "./commands/tier";
-import { registerDaemon } from "./commands/daemon";
 import { registerServe } from "./commands/serve";
 import pkg from "../package.json";
 
@@ -28,7 +27,6 @@ registerRename(program);
 registerModel(program);
 registerPlugin(program);
 registerTier(program);
-registerDaemon(program);
 registerServe(program);
 
 program.parse(process.argv);

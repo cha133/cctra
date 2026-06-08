@@ -12,11 +12,6 @@ export function configTomlPath(): string {
   return join(cctraDir(), "config.toml");
 }
 
-/** ~/.cctra/daemon.log 路径 */
-export function daemonLogPath(): string {
-  return join(cctraDir(), "daemon.log");
-}
-
 /** ~/.cctra/models-cache.json 路径 */
 export function modelsCachePath(): string {
   return join(cctraDir(), "models-cache.json");
@@ -30,11 +25,6 @@ export function pluginDir(name: string): string {
 /** ~/.cctra/plugins/<name>/config.json 路径 */
 export function pluginConfigPath(name: string): string {
   return join(pluginDir(name), "config.json");
-}
-
-/** Windows: %USERPROFILE%/.cctra/bin/cctra-daemon.exe */
-export function windowsLauncherPath(): string {
-  return join(cctraDir(), "bin", "cctra-daemon.exe");
 }
 
 /** 确保目录存在 */

@@ -2,9 +2,6 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot\..
 
-Write-Host "[package] building launcher..." -ForegroundColor Cyan
-& "$PSScriptRoot\build-launcher.ps1"
-
 Write-Host "[package] installing production deps..." -ForegroundColor Cyan
 bun install --frozen-lockfile
 

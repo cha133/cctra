@@ -29,7 +29,7 @@ export function registerAdd(program: Command): void {
         const sub = await promptNewSubscription();
         withConfig((config) => addSubscription(config, sub));
         success(`Added subscription "${sub.name}" with ${sub.models.length} model(s).`);
-        info(`Run \`cctra serve\` to start the daemon.`);
+        info(`Run \`cctra serve\` to start the server.`);
       } catch (e) {
         if ((e as Error).message.includes("cancelled")) return;
         errorOut((e as Error).message);

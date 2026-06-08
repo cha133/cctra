@@ -49,7 +49,7 @@ export function unloadPlugin(path: string): void {
   moduleCache.delete(path);
 }
 
-/** 清空所有缓存（daemon 重新加载配置时用） */
+/** 清空所有缓存（CLI 改 plugin 启用状态后用） */
 export function clearPluginCache(): void {
   moduleCache.clear();
 }

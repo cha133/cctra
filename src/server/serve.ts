@@ -62,7 +62,7 @@ export function startServer(portOverride?: number): { port: number; stop: () => 
   });
 
   const actualPort = server.port ?? port;
-  logger.info(`cctra daemon listening on http://127.0.0.1:${actualPort}`);
+  logger.info(`cctra listening on http://127.0.0.1:${actualPort}`);
 
   return {
     port: actualPort,

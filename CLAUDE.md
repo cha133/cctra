@@ -1,6 +1,6 @@
 # cctra
 
-Local LLM subscription protocol converter + plugin host. Runs a daemon on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with a **tier-based model aliasing** system (`cctra-pro` → any concrete model) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
+Local LLM subscription protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with a **tier-based model aliasing** system (`cctra-pro` → any concrete model) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
 
 ## Quick start
 
@@ -17,8 +17,6 @@ bun run dev -- serve         # foreground HTTP server
 - `src/server/` — Bun.serve() routes, SSE streaming, upstream forwarding
 - `src/plugin/` — local-path plugin loader, plugin author contract (`.d.ts` types)
 - `src/tier/` — 4 builtin tiers (`cctra` / `cctra-pro` / `cctra-flash` / `cctra-vision`) + user-defined
-- `src/daemon/` — cross-platform install/uninstall (Windows registry / macOS LaunchAgent / Linux systemd user)
-- `launcher/` — tiny Rust .exe for Windows startup (hides console window, registers in Task Manager)
 
 ## Conventions
 
