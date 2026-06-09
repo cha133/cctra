@@ -18,9 +18,7 @@
     "serve": "bun run src/index.ts serve",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "verify": "bunx tsc --noEmit && bun test",
-    "package": "pwsh -ExecutionPolicy Bypass -File scripts/package.ps1",
-    "release": "pwsh -ExecutionPolicy Bypass -File scripts/publish.ps1"
+    "verify": "bunx tsc --noEmit && bun test"
   },
   "engines": {
     "bun": ">=1.0.0"
