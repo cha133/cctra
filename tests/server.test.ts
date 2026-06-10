@@ -5,13 +5,15 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { startServer } from "../src/server/serve";
 import { resolveModelRef } from "../src/core/resolve";
 import { loadConfigFile, saveConfigFile } from "../src/core/config";
-import { configTomlPath, ensureCctraDir } from "../src/utils/paths";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startMockUpstream, type MockUpstreamHandle } from "./integration/mock-upstream";
 
 let serverHandle: { port: number; stop: () => void } | null = null;
 let mockUpstream: MockUpstreamHandle | null = null;
-let originalConfig: string | null = null;
+let tempDir: string | null = null;
+let tempConfigPath: string | null = null;
 
 function makeTestConfig(mockBaseUrl: string): string {
   return `
@@ -132,27 +134,21 @@ id = "x"
 }
 
 beforeAll(() => {
-  // 备份并替换 ~/.cctra/config.toml
-  const path = configTomlPath();
-  if (existsSync(path)) {
-    originalConfig = readFileSync(path, "utf-8");
-  }
-  ensureCctraDir();
+  // 隔离测试 config 到临时目录，避免污染 ~/.cctra/config.toml
+  tempDir = mkdtempSync(join(tmpdir(), "cctra-test-"));
+  tempConfigPath = join(tempDir, "config.toml");
+  process.env.CCTRA_CONFIG = tempConfigPath;
   mockUpstream = startMockUpstream();
-  writeFileSync(path, makeTestConfig(mockUpstream.baseUrl), "utf-8");
+  writeFileSync(tempConfigPath, makeTestConfig(mockUpstream.baseUrl), "utf-8");
   serverHandle = startServer();
 });
 
 afterAll(() => {
   serverHandle?.stop();
   mockUpstream?.stop();
-  // 还原
-  const path = configTomlPath();
-  if (originalConfig !== null) {
-    writeFileSync(path, originalConfig, "utf-8");
-  } else if (existsSync(path)) {
-    // 测试期间没有原 config；保留测试 config 不删
-  }
+  // 清理临时目录和 env var
+  if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  delete process.env.CCTRA_CONFIG;
 });
 
 describe("HTTP server", () => {
