@@ -2,7 +2,7 @@
 // 端到端集成测试
 // 覆盖：
 //   1. 协议转换 (Chat ↔ Canonical, Anthropic ↔ Canonical, Responses ↔ Canonical)
-//   2. 模型解析 (tier / sub/model / global alias)
+//   2. 模型解析 (sub/model / global alias)
 //   3. HTTP 端点 (/healthz, /v1/models, /v1/chat/completions, /anthropic/v1/messages)
 // ============================================================================
 import { describe, test, expect } from "bun:test";

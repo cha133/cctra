@@ -6,7 +6,8 @@ import { Command } from "commander";
 import * as p from "@clack/prompts";
 import { withConfig } from "./shared";
 import { checkCancel } from "../ui/prompts";
-import { success, error as errorOut } from "../ui/format";
+import { success, error as errorOut, dim } from "../ui/format";
+import { resolveAutoAlias } from "../core/alias";
 
 export function registerModel(program: Command): void {
   const model = program.command("model").description("Manage models in a subscription");
@@ -18,16 +19,27 @@ export function registerModel(program: Command): void {
     .action(async (sub: string) => {
       try {
         const id = checkCancel(await p.text({ message: "Model ID (upstream):", validate: (v) => !v?.trim() ? "Required" : undefined }));
-        const aliasRaw = checkCancel(await p.text({ message: "Alias (optional):", defaultValue: "" }));
-        const alias = aliasRaw.trim() || undefined;
+        const aliasRaw = checkCancel(await p.text({ message: "Alias (optional, leave empty to auto-generate):", defaultValue: "" }));
+        const explicit = aliasRaw.trim();
+        let resolvedAlias: string | undefined;
+        let aliasNote = "alias assigned";
         withConfig((config) => {
           if (!config.subscriptions[sub]) throw new Error(`Subscription "${sub}" not found.`);
           const s = config.subscriptions[sub]!;
           if (s.models.find((m) => m.id === id)) throw new Error(`Model "${id}" already exists.`);
-          s.models.push({ id, alias });
+          if (explicit) {
+            resolvedAlias = explicit;
+            aliasNote = `alias "${explicit}"`;
+          } else {
+            resolvedAlias = resolveAutoAlias(id, config, undefined, sub);
+            aliasNote = resolvedAlias
+              ? `auto-alias "${resolvedAlias}"`
+              : dim("no alias (id/alias already used elsewhere)");
+          }
+          s.models.push({ id, alias: resolvedAlias });
           s.updatedAt = Date.now();
         });
-        success(`Added model "${id}".`);
+        success(`Added model "${id}" (${aliasNote}).`);
       } catch (e) {
         errorOut((e as Error).message);
         process.exit(1);

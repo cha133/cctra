@@ -1,48 +1,68 @@
 // ============================================================================
-// cctra ls：列出所有 source
+// cctra ls：全局模型列表（alias → full name）
 // ============================================================================
 import { Command } from "commander";
 import { withConfig } from "./shared";
-import { green, dim, bold } from "../ui/format";
-import { info } from "../ui/format";
+import { dim, bold, green, info } from "../ui/format";
+
+interface Row {
+  alias: string;       // 空字符串表示无 alias
+  full: string;        // "source/modelId"
+  source: string;      // 显示用：vendor / displayName / name
+}
 
 export function registerLs(program: Command): void {
   program
     .command("ls")
     .alias("list")
-    .description("List all subscriptions and plugins")
+    .description("List all models across sources (alias → full name)")
     .action(() => {
       withConfig((config) => {
-        const subs = Object.values(config.subscriptions);
-        const plugins = Object.values(config.plugins);
+        const rows: Row[] = [];
 
-        if (subs.length === 0 && plugins.length === 0) {
-          info("No subscriptions or plugins yet. Run `cctra add` to start.");
+        for (const [name, sub] of Object.entries(config.subscriptions)) {
+          for (const m of sub.models) {
+            rows.push({
+              alias: m.alias ?? "",
+              full: `${name}/${m.id}`,
+              source: sub.vendor ?? name,
+            });
+          }
+        }
+        for (const [name, p] of Object.entries(config.plugins)) {
+          if (!p.enabled) continue;
+          for (const m of p.models) {
+            rows.push({
+              alias: m.alias ?? "",
+              full: `${name}/${m.id}`,
+              source: p.displayName ?? name,
+            });
+          }
+        }
+
+        if (rows.length === 0) {
+          info("No models yet. Run `cctra add` to start.");
           return;
         }
 
-        if (subs.length > 0) {
-          console.log(bold("Subscriptions:"));
-          for (const [i, sub] of subs.entries()) {
-            const marker = green("*");
-            const index = dim(`${i + 1}.`);
-            const name = green(sub.name);
-            const vendorPart = sub.vendor ? ` ${dim(`[${sub.vendor}]`)}` : "";
-            const meta = ` ${dim(`(${sub.apiFormat}, ${sub.models.length} model${sub.models.length === 1 ? "" : "s"})`)}`;
-            console.log(`${marker} ${index} ${name}${vendorPart}${meta}`);
-          }
-        }
+        // 按 source → alias/id 排序
+        rows.sort(
+          (a, b) => a.source.localeCompare(b.source) || a.alias.localeCompare(b.alias) || a.full.localeCompare(b.full),
+        );
 
-        if (plugins.length > 0) {
-          if (subs.length > 0) console.log("");
-          console.log(bold("Plugins:"));
-          for (const [i, p] of plugins.entries()) {
-            const marker = p.enabled ? green("*") : " ";
-            const index = dim(`${i + 1}.`);
-            const name = p.enabled ? p.name : dim(p.name);
-            const meta = ` ${dim(`(${p.enabled ? "enabled" : "disabled"}, ${p.models.length} model${p.models.length === 1 ? "" : "s"})`)}`;
-            console.log(`${marker} ${index} ${name}${meta}`);
-          }
+        const aliasW = Math.max(5, ...rows.map((r) => Math.max(r.alias.length, 1)));
+        const fullW = Math.max(9, ...rows.map((r) => r.full.length));
+        const rule = dim("─".repeat(aliasW + fullW + 6));
+
+        console.log(`${bold("ALIAS".padEnd(aliasW))}  ${bold("FULL NAME".padEnd(fullW))}  ${bold("SOURCE")}`);
+        console.log(rule);
+        for (const r of rows) {
+          const a = r.alias
+            ? green(r.alias.padEnd(aliasW))
+            : dim("(none)").padEnd(aliasW);
+          const f = r.full.padEnd(fullW);
+          const s = dim(r.source);
+          console.log(`${a}  ${f}  ${s}`);
         }
       });
     });

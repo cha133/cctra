@@ -128,11 +128,6 @@ updatedAt = 1700000000000
 
 [[subscriptions.stream-error-sub.models]]
 id = "x"
-
-[tiers.cctra-pro]
-name = "cctra-pro"
-target = "test-sub/model-a"
-description = "test"
 `;
 }
 
@@ -173,7 +168,6 @@ describe("HTTP server", () => {
     expect(res.status).toBe(200);
     const data = await res.json() as { data: Array<{ id: string }> };
     const ids = data.data.map((m) => m.id);
-    expect(ids).toContain("cctra-pro");
     expect(ids).toContain("test-sub/model-a");
     expect(ids).toContain("test-sub/b-alias");
   });
@@ -229,13 +223,6 @@ describe("HTTP server", () => {
 });
 
 describe("Model resolve", () => {
-  test("tier resolves to sub/model", () => {
-    const config = loadConfigFile();
-    const r = resolveModelRef("cctra-pro", config);
-    expect(r?.source.name).toBe("test-sub");
-    expect(r?.modelId).toBe("model-a");
-  });
-
   test("sub/model with alias", () => {
     const config = loadConfigFile();
     const r = resolveModelRef("test-sub/b-alias", config);
@@ -252,12 +239,6 @@ describe("Model resolve", () => {
     const config = loadConfigFile();
     const r = resolveModelRef("b-alias", config);
     expect(r?.modelId).toBe("model-b");
-  });
-
-  test("unmapped tier returns null", () => {
-    const config = loadConfigFile();
-    const r = resolveModelRef("cctra-flash", config);
-    expect(r).toBeNull();
   });
 
   test("unknown model returns null", () => {

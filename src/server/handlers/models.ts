@@ -26,10 +26,6 @@ export function handleModels(): Response {
       }
     }
   }
-  // 加 4 个 tier
-  for (const t of ["cctra", "cctra-pro", "cctra-flash", "cctra-vision"]) {
-    items.push({ id: t, object: "model", created: now, owned_by: "cctra" });
-  }
 
   return Response.json({ object: "list", data: items });
 }

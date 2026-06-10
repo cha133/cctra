@@ -21,7 +21,7 @@ export function resolveRoute(model: string, config: Config): RouteInfo {
     throw e;
   }
   if (!resolved) {
-    throw new ResolveError(`Unknown model: "${model}". Use \`cctra tier set\`, \`cctra model\`, or \`sub/model\` format.`);
+    throw new ResolveError(`Unknown model: "${model}". Use \`sub/model\` format or the auto-generated short alias from \`cctra ls\`.`);
   }
   return {
     source: resolved.source,

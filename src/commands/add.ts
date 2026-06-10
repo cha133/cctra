@@ -6,8 +6,9 @@ import { Command } from "commander";
 import { checkCancel } from "../ui/prompts";
 import { success, error as errorOut, info } from "../ui/format";
 import { withConfig } from "./shared";
-import { addSubscription } from "../core/config";
+import { addSubscription, loadConfigFile } from "../core/config";
 import { fetchUpstreamModels } from "../core/model-fetch";
+import { resolveAutoAlias } from "../core/alias";
 import {
   API_FORMAT_LABELS,
   getEndpointForFormat,
@@ -18,7 +19,7 @@ import {
   NO_VENDOR,
   type ProviderPreset,
 } from "../providers/presets";
-import type { Subscription, ApiFormat } from "../types";
+import type { Subscription, ApiFormat, Model } from "../types";
 
 export function registerAdd(program: Command): void {
   program
@@ -152,8 +153,25 @@ async function promptNewSubscription(): Promise<Subscription> {
     token: token.trim(),
     apiFormat,
     ...(apiFormat === "openai-responses" ? { responsesPath: "/v1/responses" } : {}),
-    models: selected.map((id) => ({ id })),
+    models: autoAliasModels(selected),
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * 给一批 model id 算 alias：
+ *   - 全局（含本批）唯一 → alias = id
+ *   - 冲突 → alias = undefined
+ * 用户的 config 已存在，subscription 还没插入，所以其他 source 都算「占用」。
+ */
+function autoAliasModels(ids: string[]): Model[] {
+  const config = loadConfigFile();
+  const batch: Model[] = [];
+  return ids.map((id) => {
+    const alias = resolveAutoAlias(id, config, batch);
+    const m: Model = alias ? { id, alias } : { id };
+    batch.push(m);
+    return m;
+  });
 }

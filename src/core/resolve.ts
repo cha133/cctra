@@ -1,15 +1,13 @@
 import type { Config, Source, Model } from "../types";
 import { getSource } from "./source";
-import { resolveTier } from "../tier/resolve";
 
 /**
- * 解析模型引用字符串，返回 (Source, upstreamModelId, apiFormat)
+ * 解析模型引用字符串，返回 (Source, upstreamModelId)
  *
  * 解析优先级：
- *   1. tier 名字（cctra / cctra-pro / cctra-flash / cctra-vision 或用户自建）
- *   2. "sub/model" 或 "plugin/model"（按 / 拆分）
- *   3. 全局 alias（在所有 source 的 model.alias 里找）
- *   4. 都不匹配 → null
+ *   1. "sub/model" 或 "plugin/model"（按第一个 / 拆分；先按 id，再按 alias 找）
+ *   2. 全局 alias（在所有 source 的 model.id / model.alias 里找）
+ *   3. 都不匹配 → null
  */
 export function resolveModelRef(
   ref: string,
@@ -19,11 +17,7 @@ export function resolveModelRef(
 
   const trimmed = ref.trim();
 
-  // 1. tier 名字
-  const tierResolved = resolveTier(trimmed, config);
-  if (tierResolved) return tierResolved;
-
-  // 2. "sub/model" 格式
+  // 1. "sub/model" 格式
   if (trimmed.includes("/")) {
     const [sourceName, modelPart] = trimmed.split("/", 2);
     if (!sourceName || !modelPart) return null;
@@ -34,7 +28,7 @@ export function resolveModelRef(
     return { source, modelId: model.id };
   }
 
-  // 3. 全局 alias
+  // 2. 全局 alias
   const aliasMatches: Array<{ source: Source; modelId: string }> = [];
   for (const source of Object.values(config.subscriptions)) {
     const m = findModelInSource(source, trimmed);

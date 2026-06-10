@@ -2,7 +2,7 @@
 
 > Local LLM subscription protocol converter + plugin host
 
-`cctra` runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages**, with a **tier-based model aliasing** system and **local-path plugin** support for non-standard upstream auth (OAuth, mTLS, etc.).
+`cctra` runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages**, with **per-model aliases** and **local-path plugin** support for non-standard upstream auth (OAuth, mTLS, etc.).
 
 ## Quick start
 
@@ -39,23 +39,40 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 | Claude Code | `http://127.0.0.1:3133/anthropic` |
 | OpenAI SDK / Codex / Cursor | `http://127.0.0.1:3133/v1` |
 
-## Tier aliases
+## Model aliases
 
-cctra ships 4 built-in semantic tier names that you map to concrete `(subscription, model)` pairs:
-
-| Tier | Purpose |
-|---|---|
-| `cctra` | Default (medium quality, cheap) |
-| `cctra-pro` | Deep reasoning (slow but strong) |
-| `cctra-flash` | High speed (small & fast) |
-| `cctra-vision` | Multimodal |
+When you add a model, cctra **auto-generates a short alias equal to the model id** (as long as that id is unique across all your sources). That alias works as the `model` field in client requests — you don't need to type the full `provider/model` name every time.
 
 ```bash
-# map cctra-pro to your actual deepseek model
-cctra tier set cctra-pro ark-agent-plan/deepseek-v4-pro
+# Add a subscription
+cctra add   # pick Ark Coding Plan + deepseek-v4-pro
+#   → config.toml now has: id="deepseek-v4-pro", alias="deepseek-v4-pro"
+#   → you can use "deepseek-v4-pro" as the model name in any client
+```
 
-# now configure Claude Code to use it (won't change when you switch models)
-# ANTHROPIC_MODEL=cctra-pro
+```bash
+# Add another source with a model of the same id
+cctra add   # pick DeepSeek + deepseek-v4-pro
+#   → alias collision: the first one keeps it, the second has no alias
+#   → access the first via short alias "deepseek-v4-pro"
+#   → access the second only via the full name "deepseek/deepseek-v4-pro"
+```
+
+To inspect the current alias → full name mapping:
+
+```bash
+cctra ls
+# ALIAS              FULL NAME                              SOURCE
+# ───────────────────────────────────────────────────────────
+# deepseek-v4-pro    ark-coding-plan/deepseek-v4-pro        Ark Coding Plan
+# d3                 ark-coding-plan/deepseek-v3            Ark Coding Plan
+# (none)             deepseek/deepseek-v4-pro               DeepSeek
+```
+
+To override the auto-generated alias, use `cctra model rename`:
+
+```bash
+cctra model rename ark-coding-plan deepseek-v4-pro d4p
 ```
 
 ## Plugin system
@@ -90,7 +107,7 @@ See `examples/plugins/` for working examples.
 
 ```
 cctra add                    # interactive subscription wizard
-cctra ls                     # list all sources
+cctra ls                     # list all models (alias → full name)
 cctra show <name>            # show details
 cctra rm <name>              # remove
 cctra rename <old> <new>     # rename
@@ -100,8 +117,6 @@ cctra model rm <sub> <m>     # remove model
 cctra model rename <sub> <m> <alias>
 cctra plugin add <name> <path>
 cctra plugin ls / show / enable / disable / rm
-cctra tier set <name> <target>
-cctra tier ls / show / rm
 cctra serve [--port N]       # foreground HTTP server
 ```
 
@@ -117,7 +132,7 @@ Plugin configs go in `~/.cctra/plugins/<name>/config.json`.
 - `src/convert/` — bidirectional protocol conversions
 - `src/server/` — Bun.serve() routes, upstream forwarding
 - `src/plugin/` — local-path plugin loader + author contract
-- `src/tier/` — 4 builtin tier system
+- `src/core/alias.ts` — auto-alias 决策（id 全局唯一 → 静默设 alias）
 
 ## Credits
 

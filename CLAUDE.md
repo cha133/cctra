@@ -1,6 +1,6 @@
 # cctra
 
-Local LLM subscription protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with a **tier-based model aliasing** system (`cctra-pro` → any concrete model) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
+Local LLM subscription protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with **auto-generated per-model aliases** (id 全局唯一 → 静默设 alias=id) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
 
 ## Quick start
 
@@ -16,7 +16,7 @@ bun run dev -- serve         # foreground HTTP server
 - `src/convert/` — bidirectional conversions: 3 client protocols ↔ Canonical, 2 upstream protocols ↔ Canonical
 - `src/server/` — Bun.serve() routes, SSE streaming, upstream forwarding
 - `src/plugin/` — local-path plugin loader, plugin author contract (`.d.ts` types)
-- `src/tier/` — 4 builtin tiers (`cctra` / `cctra-pro` / `cctra-flash` / `cctra-vision`) + user-defined
+- `src/core/alias.ts` — auto-alias 决策（id 全局唯一 → 静默设 alias=id；冲突 → 留空）
 
 ## Conventions
 
@@ -25,7 +25,7 @@ bun run dev -- serve         # foreground HTTP server
   - `POST /v1/chat/completions` (OpenAI Chat)
   - `POST /v1/responses` (OpenAI Responses)
 - Client baseURL convention: `http://127.0.0.1:3133/anthropic` or `http://127.0.0.1:3133/v1`
-- Model field on requests is either a tier name (`cctra-pro`), `subscription/model`, or a model alias
+- Model field on requests is either `subscription/model` or a model alias (auto-generated when the id is unique across all sources)
 - Persisted config: `~/.cctra/config.toml` via confbox
 - Plugin configs: `~/.cctra/plugins/<name>/config.json`
 

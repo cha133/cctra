@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseTOML, stringifyTOML } from "confbox";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
-import { DEFAULT_CONFIG, type Config, type Subscription, type PluginConfig, type Tier } from "../types";
+import { DEFAULT_CONFIG, type Config, type Subscription, type PluginConfig } from "../types";
 
 /**
  * 从 ~/.cctra/config.toml 加载配置
@@ -27,19 +27,7 @@ export function loadConfigFile(): Config {
     port: data.port ?? DEFAULT_CONFIG.port,
     subscriptions: data.subscriptions ?? {},
     plugins: data.plugins ?? {},
-    tiers: data.tiers ?? {},
   };
-
-  // 补回 4 个预定义 tier（如果用户删了）
-  for (const t of ["cctra", "cctra-pro", "cctra-flash", "cctra-vision"] as const) {
-    if (!config.tiers[t]) {
-      config.tiers[t] = {
-        name: t,
-        target: "",
-        description: DEFAULT_CONFIG.tiers[t]?.description,
-      };
-    }
-  }
 
   // 兜底：补 kind 字段（手动写的 config 可能漏了）
   for (const sub of Object.values(config.subscriptions)) {
@@ -124,33 +112,4 @@ export function removePlugin(config: Config, name: string): void {
     throw new Error(`Plugin "${name}" not found.`);
   }
   delete config.plugins[name];
-}
-
-// ============================================================================
-// Tier CRUD
-// ============================================================================
-
-export function getAllTiers(config: Config): Array<[string, Tier]> {
-  return Object.entries(config.tiers);
-}
-
-export function getTier(config: Config, name: string): Tier | null {
-  return config.tiers[name] ?? null;
-}
-
-export function setTier(config: Config, tier: Tier): void {
-  config.tiers[tier.name] = tier;
-}
-
-export function removeTier(config: Config, name: string): void {
-  // 预定义 tier 不允许删除，只能清空 target
-  if (["cctra", "cctra-pro", "cctra-flash", "cctra-vision"].includes(name)) {
-    config.tiers[name] = {
-      name,
-      target: "",
-      description: DEFAULT_CONFIG.tiers[name]?.description,
-    };
-    return;
-  }
-  delete config.tiers[name];
 }

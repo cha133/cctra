@@ -58,19 +58,6 @@ export interface PluginConfig extends Source {
 }
 
 // ============================================================================
-// Tier：层级模型别名（用户固定写 cctra-pro，cctra 动态路由到具体模型）
-// ============================================================================
-
-export interface Tier {
-  name: string;
-  target: string;                       // "subscription/model" 或 "plugin/model"
-  description?: string;
-}
-
-export const BUILTIN_TIERS = ["cctra", "cctra-pro", "cctra-flash", "cctra-vision"] as const;
-export type BuiltinTier = typeof BUILTIN_TIERS[number];
-
-// ============================================================================
 // 总配置（~/.cctra/config.toml 的 schema）
 // ============================================================================
 
@@ -78,17 +65,10 @@ export interface Config {
   port: number;
   subscriptions: Record<string, Subscription>;
   plugins: Record<string, PluginConfig>;
-  tiers: Record<string, Tier>;
 }
 
 export const DEFAULT_CONFIG: Config = {
   port: 3133,
   subscriptions: {},
   plugins: {},
-  tiers: {
-    cctra: { name: "cctra", target: "", description: "默认（中等质量、便宜）" },
-    "cctra-pro": { name: "cctra-pro", target: "", description: "深度思考（慢但强）" },
-    "cctra-flash": { name: "cctra-flash", target: "", description: "高速（小快灵）" },
-    "cctra-vision": { name: "cctra-vision", target: "", description: "多模态" },
-  },
 };
