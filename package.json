@@ -1,6 +1,6 @@
 {
   "name": "cctra",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Local LLM provider protocol converter + plugin host. Runs a local HTTP server on 127.0.0.1:3133 that translates between OpenAI Chat / OpenAI Responses / Anthropic Messages, with auto-generated per-model aliases and local-path plugin support.",
   "type": "module",
   "bin": {
@@ -43,6 +43,7 @@
     "@clack/prompts": "^1.5.0",
     "commander": "^15.0.0",
     "confbox": "^0.2.4",
+    "console-table-printer": "^2.16.1",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

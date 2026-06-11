@@ -3,7 +3,8 @@
 // ============================================================================
 import { Command } from "commander";
 import { withConfig } from "./shared";
-import { dim, bold, green, info } from "../ui/format";
+import { Table } from "console-table-printer";
+import { dim, green, info } from "../ui/format";
 
 interface Row {
   alias: string;       // 空字符串表示无 alias
@@ -50,20 +51,20 @@ export function registerLs(program: Command): void {
           (a, b) => a.source.localeCompare(b.source) || a.alias.localeCompare(b.alias) || a.full.localeCompare(b.full),
         );
 
-        const aliasW = Math.max(5, ...rows.map((r) => Math.max(r.alias.length, 1)));
-        const fullW = Math.max(9, ...rows.map((r) => r.full.length));
-        const rule = dim("─".repeat(aliasW + fullW + 6));
+        const displayRows = rows.map((r) => ({
+          alias: r.alias ? green(r.alias) : dim("(none)"),
+          full: r.full,
+          source: dim(r.source),
+        }));
 
-        console.log(`${bold("ALIAS".padEnd(aliasW))}  ${bold("FULL NAME".padEnd(fullW))}  ${bold("SOURCE")}`);
-        console.log(rule);
-        for (const r of rows) {
-          const a = r.alias
-            ? green(r.alias.padEnd(aliasW))
-            : dim("(none)").padEnd(aliasW);
-          const f = r.full.padEnd(fullW);
-          const s = dim(r.source);
-          console.log(`${a}  ${f}  ${s}`);
-        }
+        new Table({
+          columns: [
+            { name: "alias",  title: "ALIAS",     alignment: "left" },
+            { name: "full",   title: "FULL NAME", alignment: "left" },
+            { name: "source", title: "SOURCE",    alignment: "left" },
+          ],
+          rows: displayRows,
+        }).printTable();
       });
     });
 }
