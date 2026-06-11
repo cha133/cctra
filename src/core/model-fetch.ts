@@ -24,6 +24,32 @@ const memoryCache = new Map<string, ModelCacheEntry>();
 const DEFAULT_TTL = 24 * 60 * 60 * 1000; // 24h
 const OPENROUTER_FALLBACK = "https://openrouter.ai/api/v1/models";
 
+// 已知的 Anthropic 兼容路径后缀（按长度降序，先匹配长后缀）
+// 供应商的 endpoint 可能指向 Anthropic 兼容子路径（如 /anthropic），
+// 但 /v1/models 通常只在根路径可用，需要剥离子路径后重试
+const KNOWN_COMPAT_SUFFIXES = [
+  "/api/claudecode",
+  "/api/anthropic",
+  "/apps/anthropic",
+  "/api/coding",
+  "/api/plan",
+  "/claudecode",
+  "/anthropic",
+  "/step_plan",
+  "/coding",
+  "/claude",
+];
+
+function stripCompatSuffix(url: string): string | null {
+  const trimmed = url.replace(/\/+$/, "");
+  for (const suffix of KNOWN_COMPAT_SUFFIXES) {
+    if (trimmed.endsWith(suffix)) {
+      return trimmed.slice(0, trimmed.length - suffix.length);
+    }
+  }
+  return null;
+}
+
 /**
  * 从上游拉模型列表（带 3 层缓存 + OpenRouter fallback）
  * 1. 试上游 endpoint 的 /v1/models
@@ -61,6 +87,17 @@ export async function fetchUpstreamModels(opts: FetchModelsOptions): Promise<str
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
 
   let models = await tryFetchModels(url, headers);
+
+  // L3.5: 剥离已知兼容路径后缀后重试（如 /anthropic → 根 /v1/models）
+  if (models.length === 0) {
+    const stripped = stripCompatSuffix(opts.endpoint);
+    if (stripped) {
+      const fallbackUrl = joinUrl(stripped, path);
+      if (fallbackUrl !== url) {
+        models = await tryFetchModels(fallbackUrl, headers);
+      }
+    }
+  }
 
   // L4: Fallback 到 OpenRouter
   if (models.length === 0) {
