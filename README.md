@@ -1,6 +1,6 @@
 # cctra
 
-> Local LLM subscription protocol converter + plugin host
+> Local LLM provider protocol converter + plugin host
 
 `cctra` runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages**, with **per-model aliases** and **local-path plugin** support for non-standard upstream auth (OAuth, mTLS, etc.).
 
@@ -11,7 +11,7 @@
 bun add -g cctra
 # or npm i -g cctra
 
-# add a subscription (interactive)
+# add a provider (interactive wizard)
 cctra add
 
 # start the server (foreground)
@@ -44,7 +44,7 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 When you add a model, cctra **auto-generates a short alias equal to the model id** (as long as that id is unique across all your sources). That alias works as the `model` field in client requests — you don't need to type the full `provider/model` name every time.
 
 ```bash
-# Add a subscription
+# Add a provider
 cctra add   # pick Ark Coding Plan + deepseek-v4-pro
 #   → config.toml now has: id="deepseek-v4-pro", alias="deepseek-v4-pro"
 #   → you can use "deepseek-v4-pro" as the model name in any client
@@ -69,10 +69,10 @@ cctra ls
 # (none)             deepseek/deepseek-v4-pro               DeepSeek
 ```
 
-To override the auto-generated alias, use `cctra model rename`:
+To override the auto-generated alias, use `cctra alias`:
 
 ```bash
-cctra model rename ark-coding-plan deepseek-v4-pro d4p
+cctra alias ark-coding-plan/deepseek-v4-pro d4p
 ```
 
 ## Plugin system
@@ -106,18 +106,16 @@ See `examples/plugins/` for working examples.
 ## CLI
 
 ```
-cctra add                    # interactive subscription wizard
-cctra ls                     # list all models (alias → full name)
-cctra show <name>            # show details
-cctra rm <name>              # remove
-cctra rename <old> <new>     # rename
-cctra model add <sub>        # add model to a subscription
-cctra model ls <sub>         # list models
-cctra model rm <sub> <m>     # remove model
-cctra model rename <sub> <m> <alias>
+cctra add                       # interactive provider wizard
+cctra edit <name>               # edit models (multiselect toggle)
+cctra alias <model> [<new>]     # show / set / clear model alias
+cctra ls                        # list all models (alias → full name)
+cctra show <name>               # show provider / plugin details
+cctra rm <name>                 # remove provider / plugin / model
+cctra rename <old> <new>        # rename provider
 cctra plugin add <name> <path>
 cctra plugin ls / show / enable / disable / rm
-cctra serve [--port N]       # foreground HTTP server
+cctra serve [--port N]          # foreground HTTP server
 ```
 
 ## Configuration

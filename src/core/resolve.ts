@@ -5,7 +5,7 @@ import { getSource } from "./source";
  * 解析模型引用字符串，返回 (Source, upstreamModelId)
  *
  * 解析优先级：
- *   1. "sub/model" 或 "plugin/model"（按第一个 / 拆分；先按 id，再按 alias 找）
+ *   1. "provider/model" 或 "plugin/model"（按第一个 / 拆分；先按 id，再按 alias 找）
  *   2. 全局 alias（在所有 source 的 model.id / model.alias 里找）
  *   3. 都不匹配 → null
  */
@@ -17,7 +17,7 @@ export function resolveModelRef(
 
   const trimmed = ref.trim();
 
-  // 1. "sub/model" 格式
+  // 1. "provider/model" 格式
   if (trimmed.includes("/")) {
     const [sourceName, modelPart] = trimmed.split("/", 2);
     if (!sourceName || !modelPart) return null;
@@ -30,7 +30,7 @@ export function resolveModelRef(
 
   // 2. 全局 alias
   const aliasMatches: Array<{ source: Source; modelId: string }> = [];
-  for (const source of Object.values(config.subscriptions)) {
+  for (const source of Object.values(config.providers)) {
     const m = findModelInSource(source, trimmed);
     if (m) aliasMatches.push({ source, modelId: m.id });
   }

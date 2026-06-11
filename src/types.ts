@@ -1,10 +1,10 @@
 // ============================================================================
-// Source 抽象：所有提供模型的服务（静态订阅 + 动态插件）的统一接口
+// Source 抽象：所有提供模型的服务（静态 provider + 动态插件）的统一接口
 // ============================================================================
 
 import type { ApiFormat } from "./canonical/types";
 
-export type SourceKind = "subscription" | "plugin";
+export type SourceKind = "provider" | "plugin";
 
 export interface Source {
   kind: SourceKind;
@@ -26,13 +26,13 @@ export interface Model {
 }
 
 // ============================================================================
-// Subscription：静态订阅（endpoint + token + 协议类型）
+// Provider：静态上游提供方（endpoint + token + 协议类型）
 // ============================================================================
 
 export type { ApiFormat } from "./canonical/types";
 
-export interface Subscription extends Source {
-  kind: "subscription";
+export interface Provider extends Source {
+  kind: "provider";
   vendor?: string;                // 来源 vendor 名（仅显示用，不影响路由）
   endpoint: string;
   token: string;
@@ -63,12 +63,12 @@ export interface PluginConfig extends Source {
 
 export interface Config {
   port: number;
-  subscriptions: Record<string, Subscription>;
+  providers: Record<string, Provider>;
   plugins: Record<string, PluginConfig>;
 }
 
 export const DEFAULT_CONFIG: Config = {
   port: 3133,
-  subscriptions: {},
+  providers: {},
   plugins: {},
 };

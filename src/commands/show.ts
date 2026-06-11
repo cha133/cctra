@@ -1,16 +1,16 @@
 // ============================================================================
-// cctra show <name>：显示订阅/插件详情
+// cctra show <name>：显示 provider / 插件详情
 // ============================================================================
 import { Command } from "commander";
 import { withConfig } from "./shared";
 import { maskToken } from "../ui/prompts";
 import { bold, dim, info } from "../ui/format";
-import { getSource, isSubscription, isPlugin } from "../core/source";
+import { getSource, isProvider, isPlugin } from "../core/source";
 
 export function registerShow(program: Command): void {
   program
     .command("show <name>")
-    .description("Show details of a subscription or plugin")
+    .description("Show details of a provider or plugin")
     .action((name: string) => {
       withConfig((config) => {
         const s = getSource(config, name);
@@ -20,7 +20,7 @@ export function registerShow(program: Command): void {
         }
 
         console.log(bold(`${s.name}`) + `  ${dim(`(${s.kind})`)}`);
-        if (isSubscription(s)) {
+        if (isProvider(s)) {
           if (s.vendor) {
             console.log(`  ${dim("vendor:")}    ${s.vendor}`);
           }

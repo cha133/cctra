@@ -20,12 +20,12 @@ export function registerLs(program: Command): void {
       withConfig((config) => {
         const rows: Row[] = [];
 
-        for (const [name, sub] of Object.entries(config.subscriptions)) {
-          for (const m of sub.models) {
+        for (const [name, provider] of Object.entries(config.providers)) {
+          for (const m of provider.models) {
             rows.push({
               alias: m.alias ?? "",
               full: `${name}/${m.id}`,
-              source: sub.vendor ?? name,
+              source: provider.vendor ?? name,
             });
           }
         }

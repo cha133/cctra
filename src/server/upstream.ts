@@ -2,7 +2,7 @@
 // 上游转发 orchestrator：把 Canonical 请求转成上游协议，注入 auth，fetch，解析响应
 // 同时支持 stream 和非 stream
 // ============================================================================
-import type { Source, Subscription, ApiFormat } from "../types";
+import type { Source, Provider, ApiFormat } from "../types";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk } from "../canonical/types";
 import { canonicalToChatUpstream } from "../convert/upstream/canonical-to-chat";
 import { canonicalToAnthropicUpstream } from "../convert/upstream/canonical-to-anthropic";
@@ -140,7 +140,7 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
 }
 
 // ============================================================================
-// 解析上游 ready config（subscription 直接用；plugin 调用 getConfig）
+// 解析上游 ready config（provider 直接用；plugin 调用 getConfig）
 // ============================================================================
 
 interface ReadyConfig {
@@ -152,14 +152,14 @@ interface ReadyConfig {
 
 async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<ReadyConfig | null> {
   const source = route.source;
-  if (source.kind === "subscription") {
-    const sub = source as Subscription;
-    const path = pickUpstreamPath(sub);
+  if (source.kind === "provider") {
+    const provider = source as Provider;
+    const path = pickUpstreamPath(provider);
     return {
-      baseUrl: sub.endpoint,
+      baseUrl: provider.endpoint,
       path,
-      apiFormat: sub.apiFormat,
-      authHeader: { Authorization: `Bearer ${sub.token}`, ...sub.headers },
+      apiFormat: provider.apiFormat,
+      authHeader: { Authorization: `Bearer ${provider.token}`, ...provider.headers },
     };
   }
   // plugin
@@ -242,10 +242,10 @@ function pickUpstreamParser(format: ApiFormat): UpstreamParser {
   }
 }
 
-function pickUpstreamPath(sub: Subscription): string {
-  switch (sub.apiFormat) {
-    case "openai-chat":        return sub.chatCompletionsPath ?? "/v1/chat/completions";
-    case "openai-responses":   return sub.responsesPath ?? "/v1/responses";
-    case "anthropic-messages": return sub.messagesPath ?? "/v1/messages";
+function pickUpstreamPath(provider: Provider): string {
+  switch (provider.apiFormat) {
+    case "openai-chat":        return provider.chatCompletionsPath ?? "/v1/chat/completions";
+    case "openai-responses":   return provider.responsesPath ?? "/v1/responses";
+    case "anthropic-messages": return provider.messagesPath ?? "/v1/messages";
   }
 }

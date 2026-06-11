@@ -7,7 +7,7 @@ import type { Config, Model } from "../types";
 
 /**
  * 判定 id 是否可以安全地静默设 alias=id
- * @param excludeSource 跳过该 source（用于「同一 source 内」判断，e.g. model add <sub>）
+ * @param excludeSource 跳过该 source（用于「同一 provider 内」判断）
  */
 export function canAutoAlias(
   id: string,
@@ -15,9 +15,9 @@ export function canAutoAlias(
   excludeSource?: string,
 ): boolean {
   if (!id) return false;
-  for (const [name, sub] of Object.entries(config.subscriptions)) {
-    if (name === excludeSource) continue;
-    if (sub.models.some((m) => m.id === id || m.alias === id)) return false;
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    if (providerName === excludeSource) continue;
+    if (provider.models.some((m) => m.id === id || m.alias === id)) return false;
   }
   for (const [name, p] of Object.entries(config.plugins)) {
     if (name === excludeSource || !p.enabled) continue;

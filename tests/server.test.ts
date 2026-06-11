@@ -19,7 +19,7 @@ function makeTestConfig(mockBaseUrl: string): string {
   return `
 port = 31444
 
-[subscriptions.test-sub]
+[providers.test-sub]
 name = "test-sub"
 endpoint = "https://example.com"
 token = "test-token"
@@ -27,14 +27,14 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.test-sub.models]]
+[[providers.test-sub.models]]
 id = "model-a"
 
-[[subscriptions.test-sub.models]]
+[[providers.test-sub.models]]
 id = "model-b"
 alias = "b-alias"
 
-[subscriptions.tool-sub]
+[providers.tool-sub]
 name = "tool-sub"
 endpoint = "${mockBaseUrl}"
 chatCompletionsPath = "/chat/stream-tool-call"
@@ -43,10 +43,10 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.tool-sub.models]]
+[[providers.tool-sub.models]]
 id = "x"
 
-[subscriptions.echo-sub]
+[providers.echo-sub]
 name = "echo-sub"
 endpoint = "${mockBaseUrl}"
 chatCompletionsPath = "/chat/echo-body"
@@ -55,10 +55,10 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.echo-sub.models]]
+[[providers.echo-sub.models]]
 id = "x"
 
-[subscriptions.slow-sub]
+[providers.slow-sub]
 name = "slow-sub"
 endpoint = "${mockBaseUrl}"
 chatCompletionsPath = "/chat/slow"
@@ -67,10 +67,10 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.slow-sub.models]]
+[[providers.slow-sub.models]]
 id = "x"
 
-[subscriptions.responses-echo-sub]
+[providers.responses-echo-sub]
 name = "responses-echo-sub"
 endpoint = "${mockBaseUrl}"
 responsesPath = "/v1/responses/echo"
@@ -79,11 +79,11 @@ apiFormat = "openai-responses"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.responses-echo-sub.models]]
+[[providers.responses-echo-sub.models]]
 id = "x"
 
 # H 错误透传测试 fixture
-[subscriptions.chat-401-sub]
+[providers.chat-401-sub]
 name = "chat-401-sub"
 endpoint = "${mockBaseUrl}"
 chatCompletionsPath = "/chat/error-401"
@@ -92,10 +92,10 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.chat-401-sub.models]]
+[[providers.chat-401-sub.models]]
 id = "x"
 
-[subscriptions.anthropic-429-sub]
+[providers.anthropic-429-sub]
 name = "anthropic-429-sub"
 endpoint = "${mockBaseUrl}"
 messagesPath = "/chat/error-429"
@@ -104,10 +104,10 @@ apiFormat = "anthropic-messages"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.anthropic-429-sub.models]]
+[[providers.anthropic-429-sub.models]]
 id = "x"
 
-[subscriptions.responses-500-sub]
+[providers.responses-500-sub]
 name = "responses-500-sub"
 endpoint = "${mockBaseUrl}"
 responsesPath = "/chat/error-500"
@@ -116,10 +116,10 @@ apiFormat = "openai-responses"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.responses-500-sub.models]]
+[[providers.responses-500-sub.models]]
 id = "x"
 
-[subscriptions.stream-error-sub]
+[providers.stream-error-sub]
 name = "stream-error-sub"
 endpoint = "${mockBaseUrl}"
 chatCompletionsPath = "/chat/stream-error"
@@ -128,7 +128,7 @@ apiFormat = "openai-chat"
 createdAt = 1700000000000
 updatedAt = 1700000000000
 
-[[subscriptions.stream-error-sub.models]]
+[[providers.stream-error-sub.models]]
 id = "x"
 `;
 }

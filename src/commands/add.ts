@@ -1,12 +1,12 @@
 // ============================================================================
-// cctra add：交互式添加订阅
+// cctra add：交互式添加 provider
 // ============================================================================
 import * as p from "@clack/prompts";
 import { Command } from "commander";
 import { checkCancel } from "../ui/prompts";
 import { success, error as errorOut, info } from "../ui/format";
 import { withConfig } from "./shared";
-import { addSubscription, loadConfigFile } from "../core/config";
+import { addProvider, loadConfigFile } from "../core/config";
 import { fetchUpstreamModels } from "../core/model-fetch";
 import { resolveAutoAlias } from "../core/alias";
 import {
@@ -19,17 +19,17 @@ import {
   NO_VENDOR,
   type ProviderPreset,
 } from "../providers/presets";
-import type { Subscription, ApiFormat, Model } from "../types";
+import type { Provider, ApiFormat, Model } from "../types";
 
 export function registerAdd(program: Command): void {
   program
     .command("add")
-    .description("Interactively add a subscription")
+    .description("Interactively add a provider")
     .action(async () => {
       try {
-        const sub = await promptNewSubscription();
-        withConfig((config) => addSubscription(config, sub));
-        success(`Added subscription "${sub.name}" with ${sub.models.length} model(s).`);
+        const provider = await promptNewProvider();
+        withConfig((config) => addProvider(config, provider));
+        success(`Added provider "${provider.name}" with ${provider.models.length} model(s).`);
         info(`Run \`cctra serve\` to start the server.`);
       } catch (e) {
         if ((e as Error).message.includes("cancelled")) return;
@@ -39,7 +39,7 @@ export function registerAdd(program: Command): void {
     });
 }
 
-async function promptNewSubscription(): Promise<Subscription> {
+async function promptNewProvider(): Promise<Provider> {
   // 1. Vendor（可跳过 → 走纯手输）
   const vendor = checkCancel(
     await p.autocomplete<ProviderPreset>({
@@ -58,7 +58,7 @@ async function promptNewSubscription(): Promise<Subscription> {
   const defaultName = isCustom ? "" : generateProfileName(vendor.name);
   const name = checkCancel(
     await p.text({
-      message: "Subscription name:",
+      message: "Provider name:",
       initialValue: defaultName,
       placeholder: "e.g. ark-agent-plan, deepseek",
       validate: (v) => {
@@ -146,7 +146,7 @@ async function promptNewSubscription(): Promise<Subscription> {
   }
 
   return {
-    kind: "subscription",
+    kind: "provider",
     vendor: isCustom ? undefined : vendor.name,
     name: name.trim().toLowerCase(),
     endpoint: endpoint.trim(),
@@ -163,7 +163,7 @@ async function promptNewSubscription(): Promise<Subscription> {
  * 给一批 model id 算 alias：
  *   - 全局（含本批）唯一 → alias = id
  *   - 冲突 → alias = undefined
- * 用户的 config 已存在，subscription 还没插入，所以其他 source 都算「占用」。
+ * 用户的 config 已存在，provider 还没插入，所以其他 source 都算「占用」。
  */
 function autoAliasModels(ids: string[]): Model[] {
   const config = loadConfigFile();

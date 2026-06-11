@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseTOML, stringifyTOML } from "confbox";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
-import { DEFAULT_CONFIG, type Config, type Subscription, type PluginConfig } from "../types";
+import { DEFAULT_CONFIG, type Config, type Provider, type PluginConfig } from "../types";
 
 /**
  * 从 ~/.cctra/config.toml 加载配置
@@ -25,13 +25,13 @@ export function loadConfigFile(): Config {
   // 合并默认结构
   const config: Config = {
     port: data.port ?? DEFAULT_CONFIG.port,
-    subscriptions: data.subscriptions ?? {},
+    providers: data.providers ?? {},
     plugins: data.plugins ?? {},
   };
 
   // 兜底：补 kind 字段（手动写的 config 可能漏了）
-  for (const sub of Object.values(config.subscriptions)) {
-    if (!sub.kind) sub.kind = "subscription";
+  for (const provider of Object.values(config.providers)) {
+    if (!provider.kind) provider.kind = "provider";
   }
   for (const p of Object.values(config.plugins)) {
     if (!p.kind) p.kind = "plugin";
@@ -49,36 +49,36 @@ export function saveConfigFile(config: Config): void {
 }
 
 // ============================================================================
-// Subscription CRUD
+// Provider CRUD
 // ============================================================================
 
-export function getAllSubscriptions(config: Config): Array<[string, Subscription]> {
-  return Object.entries(config.subscriptions);
+export function getAllProviders(config: Config): Array<[string, Provider]> {
+  return Object.entries(config.providers);
 }
 
-export function getSubscription(config: Config, name: string): Subscription | null {
-  return config.subscriptions[name] ?? null;
+export function getProvider(config: Config, name: string): Provider | null {
+  return config.providers[name] ?? null;
 }
 
-export function addSubscription(config: Config, sub: Subscription): void {
-  if (config.subscriptions[sub.name]) {
-    throw new Error(`Subscription "${sub.name}" already exists.`);
+export function addProvider(config: Config, provider: Provider): void {
+  if (config.providers[provider.name]) {
+    throw new Error(`Provider "${provider.name}" already exists.`);
   }
-  config.subscriptions[sub.name] = sub;
+  config.providers[provider.name] = provider;
 }
 
-export function updateSubscription(config: Config, sub: Subscription): void {
-  if (!config.subscriptions[sub.name]) {
-    throw new Error(`Subscription "${sub.name}" not found.`);
+export function updateProvider(config: Config, provider: Provider): void {
+  if (!config.providers[provider.name]) {
+    throw new Error(`Provider "${provider.name}" not found.`);
   }
-  config.subscriptions[sub.name] = sub;
+  config.providers[provider.name] = provider;
 }
 
-export function removeSubscription(config: Config, name: string): void {
-  if (!config.subscriptions[name]) {
-    throw new Error(`Subscription "${name}" not found.`);
+export function removeProvider(config: Config, name: string): void {
+  if (!config.providers[name]) {
+    throw new Error(`Provider "${name}" not found.`);
   }
-  delete config.subscriptions[name];
+  delete config.providers[name];
 }
 
 // ============================================================================

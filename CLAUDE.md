@@ -1,13 +1,13 @@
 # cctra
 
-Local LLM subscription protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with **auto-generated per-model aliases** (id 全局唯一 → 静默设 alias=id) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
+Local LLM provider protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with **auto-generated per-model aliases** (id 全局唯一 → 静默设 alias=id) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
 
 ## Quick start
 
 ```bash
 bun install
-bun run dev -- add           # interactive subscription wizard
-bun run dev -- serve         # foreground HTTP server
+bun run src/index.ts add           # interactive provider wizard
+bun run src/index.ts serve         # foreground HTTP server
 ```
 
 ## Architecture
@@ -25,7 +25,8 @@ bun run dev -- serve         # foreground HTTP server
   - `POST /v1/chat/completions` (OpenAI Chat)
   - `POST /v1/responses` (OpenAI Responses)
 - Client baseURL convention: `http://127.0.0.1:3133/anthropic` or `http://127.0.0.1:3133/v1`
-- Model field on requests is either `subscription/model` or a model alias (auto-generated when the id is unique across all sources)
+- Model field on requests is either `provider/model` or a model alias (auto-generated when the id is unique across all sources)
+- CLI commands: `add` / `edit` / `rm` / `rename` / `alias` / `show` / `ls` / `plugin` / `serve`
 - Persisted config: `~/.cctra/config.toml` via confbox
 - Plugin configs: `~/.cctra/plugins/<name>/config.json`
 

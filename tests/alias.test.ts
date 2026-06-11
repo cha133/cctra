@@ -6,19 +6,19 @@ import { canAutoAlias, resolveAutoAlias } from "../src/core/alias";
 import type { Config, Model } from "../src/types";
 
 function emptyConfig(): Config {
-  return { port: 3133, subscriptions: {}, plugins: {} };
+  return { port: 3133, providers: {}, plugins: {} };
 }
 
-function configWithSub(
-  subName: string,
+function configWithProvider(
+  providerName: string,
   models: Array<{ id: string; alias?: string }>,
 ): Config {
   return {
     port: 3133,
-    subscriptions: {
-      [subName]: {
-        kind: "subscription",
-        name: subName,
+    providers: {
+      [providerName]: {
+        kind: "provider",
+        name: providerName,
         endpoint: "https://example.com",
         token: "t",
         apiFormat: "openai-chat",
@@ -37,22 +37,22 @@ describe("canAutoAlias", () => {
   });
 
   test("id unique in config: auto-aliasable", () => {
-    const cfg = configWithSub("a", [{ id: "model-a" }]);
+    const cfg = configWithProvider("a", [{ id: "model-a" }]);
     expect(canAutoAlias("model-b", cfg)).toBe(true);
   });
 
   test("id already used as id in other source: blocked", () => {
-    const cfg = configWithSub("a", [{ id: "deepseek-v4-pro" }]);
+    const cfg = configWithProvider("a", [{ id: "deepseek-v4-pro" }]);
     expect(canAutoAlias("deepseek-v4-pro", cfg)).toBe(false);
   });
 
   test("id already used as alias in other source: blocked", () => {
-    const cfg = configWithSub("a", [{ id: "d4", alias: "deepseek-v4-pro" }]);
+    const cfg = configWithProvider("a", [{ id: "d4", alias: "deepseek-v4-pro" }]);
     expect(canAutoAlias("deepseek-v4-pro", cfg)).toBe(false);
   });
 
   test("id used in same source: not blocked (excludeSource)", () => {
-    const cfg = configWithSub("a", [{ id: "model-a" }]);
+    const cfg = configWithProvider("a", [{ id: "model-a" }]);
     // 在 a 这个 source 内加另一个 model-a：应允许（excludeSource=a 跳过自己）
     expect(canAutoAlias("model-a", cfg, "a")).toBe(true);
   });
@@ -64,7 +64,7 @@ describe("canAutoAlias", () => {
   test("disabled plugin's models don't block", () => {
     const cfg: Config = {
       port: 3133,
-      subscriptions: {},
+      providers: {},
       plugins: {
         p: {
           kind: "plugin",
@@ -82,17 +82,17 @@ describe("canAutoAlias", () => {
 
 describe("resolveAutoAlias", () => {
   test("globally unique: returns id", () => {
-    const cfg = configWithSub("a", [{ id: "existing" }]);
+    const cfg = configWithProvider("a", [{ id: "existing" }]);
     expect(resolveAutoAlias("new", cfg)).toBe("new");
   });
 
   test("id collision: returns undefined", () => {
-    const cfg = configWithSub("a", [{ id: "x" }]);
+    const cfg = configWithProvider("a", [{ id: "x" }]);
     expect(resolveAutoAlias("x", cfg)).toBeUndefined();
   });
 
   test("alias collision: returns undefined", () => {
-    const cfg = configWithSub("a", [{ id: "y", alias: "x" }]);
+    const cfg = configWithProvider("a", [{ id: "y", alias: "x" }]);
     expect(resolveAutoAlias("x", cfg)).toBeUndefined();
   });
 
