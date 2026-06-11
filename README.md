@@ -62,11 +62,13 @@ To inspect the current alias → full name mapping:
 
 ```bash
 cctra ls
-# ALIAS              FULL NAME                              SOURCE
-# ───────────────────────────────────────────────────────────
-# deepseek-v4-pro    ark-coding-plan/deepseek-v4-pro        Ark Coding Plan
-# d3                 ark-coding-plan/deepseek-v3            Ark Coding Plan
-# (none)             deepseek/deepseek-v4-pro               DeepSeek
+# ┌─────────────────┬──────────────────────────────────────┬──────────────────┐
+# │ ALIAS           │ FULL NAME                            │ SOURCE           │
+# ├─────────────────┼──────────────────────────────────────┼──────────────────┤
+# │ deepseek-v4-pro │ ark-coding-plan/deepseek-v4-pro      │ Ark Coding Plan  │
+# │ d3              │ ark-coding-plan/deepseek-v3          │ Ark Coding Plan  │
+# │ (none)          │ deepseek/deepseek-v4-pro             │ DeepSeek         │
+# └─────────────────┴──────────────────────────────────────┴──────────────────┘
 ```
 
 To override the auto-generated alias, use `cctra alias`:
