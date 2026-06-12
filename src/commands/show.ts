@@ -37,8 +37,12 @@ export function registerShow(program: Command): void {
           console.log(`    ${dim("(none)")}`);
         } else {
           for (const m of s.models) {
-            const alias = m.alias ? ` ${dim(`(alias: ${m.alias})`)}` : "";
-            console.log(`    - ${m.id}${alias}`);
+            const full = `${s.name}/${m.id}`;
+            const aliases = Object.entries(config.aliases)
+              .filter(([, v]) => v === full)
+              .map(([n]) => n);
+            const aliasHint = aliases.length > 0 ? ` ${dim(`(aliases: ${aliases.join(", ")})`)}` : "";
+            console.log(`    - ${m.id}${aliasHint}`);
           }
         }
       });

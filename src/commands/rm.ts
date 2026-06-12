@@ -74,10 +74,11 @@ function removeModelByName(ref: string, config: Config): void {
   const source = getSource(config, sourceName);
   if (!source) throw new Error(`Provider "${sourceName}" not found.`);
 
-  const idx = source.models.findIndex((m) => m.id === modelPart || m.alias === modelPart);
+  const idx = source.models.findIndex((m) => m.id === modelPart);
   if (idx < 0) throw new Error(`Model "${modelPart}" not found in "${sourceName}".`);
 
   source.models.splice(idx, 1);
+  unbindAliasesPointingTo(config, `${sourceName}/${modelPart}`);
   success(`Removed model "${ref}".`);
 }
 
@@ -92,6 +93,7 @@ async function removeModel(ref: string, sourceName: string, modelId: string, con
   if (idx < 0) throw new Error(`Model "${modelId}" not found in "${sourceName}".`);
 
   source.models.splice(idx, 1);
+  unbindAliasesPointingTo(config, `${sourceName}/${modelId}`);
   success(`Removed model "${ref}".`);
 }
 
@@ -100,12 +102,24 @@ async function removeSource(name: string, config: Config): Promise<void> {
   if (!ok) throw new Error("cancelled");
 
   if (config.providers[name]) {
+    // 先抓走该 provider 所有 model 全名
+    const fullNames = config.providers[name]!.models.map((m) => `${name}/${m.id}`);
     removeProvider(config, name);
+    for (const fn of fullNames) unbindAliasesPointingTo(config, fn);
     success(`Removed provider "${name}".`);
   } else if (config.plugins[name]) {
+    const fullNames = config.plugins[name]!.models.map((m) => `${name}/${m.id}`);
     removePlugin(config, name);
+    for (const fn of fullNames) unbindAliasesPointingTo(config, fn);
     success(`Removed plugin "${name}".`);
   } else {
     throw new Error(`Not found: "${name}". Use \`provider/model\` format to remove a model.`);
+  }
+}
+
+/** 把所有指向 fullName 的 alias 设为 ""（保留 key，方便用户重指向） */
+function unbindAliasesPointingTo(config: Config, fullName: string): void {
+  for (const [aname, val] of Object.entries(config.aliases)) {
+    if (val === fullName) config.aliases[aname] = "";
   }
 }

@@ -6,9 +6,9 @@ import { Command } from "commander";
 import { checkCancel } from "../ui/prompts";
 import { success, error as errorOut, info } from "../ui/format";
 import { withConfig } from "./shared";
-import { addProvider, loadConfigFile } from "../core/config";
+import { addProvider } from "../core/config";
 import { fetchUpstreamModels } from "../core/model-fetch";
-import { resolveAutoAlias } from "../core/alias";
+import { autoAliasValue } from "../core/alias";
 import {
   API_FORMAT_LABELS,
   getEndpointForFormat,
@@ -19,7 +19,7 @@ import {
   NO_VENDOR,
   type ProviderPreset,
 } from "../providers/presets";
-import type { Provider, ApiFormat, Model } from "../types";
+import type { Provider, ApiFormat, Config } from "../types";
 
 export function registerAdd(program: Command): void {
   program
@@ -28,9 +28,12 @@ export function registerAdd(program: Command): void {
     .action(async () => {
       try {
         const provider = await promptNewProvider();
-        withConfig((config) => addProvider(config, provider));
+        withConfig((config) => {
+          addProvider(config, provider);
+          registerAutoAliases(config, provider.name, provider.models.map((m) => m.id));
+        });
         success(`Added provider "${provider.name}" with ${provider.models.length} model(s).`);
-        info(`Run \`cctra serve\` to start the server.`);
+        info(`Run \`cctra alias\` to inspect auto-generated aliases; \`cctra serve\` to start.`);
       } catch (e) {
         if ((e as Error).message.includes("cancelled")) return;
         errorOut((e as Error).message);
@@ -153,25 +156,25 @@ async function promptNewProvider(): Promise<Provider> {
     token: token.trim(),
     apiFormat,
     ...(apiFormat === "openai-responses" ? { responsesPath: "/v1/responses" } : {}),
-    models: autoAliasModels(selected),
+    models: selected.map((id) => ({ id })),
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
 }
 
 /**
- * 给一批 model id 算 alias：
- *   - 全局（含本批）唯一 → alias = id
- *   - 冲突 → alias = undefined
- * 用户的 config 已存在，provider 还没插入，所以其他 source 都算「占用」。
+ * 给一批 model id 在 config.aliases 里注册 auto-alias。
+ *   - 全局唯一 → aliases[id] = "provider/id"
+ *   - 已有同名 alias 或冲突 → 跳过
+ * 调用前 provider 必须已经写入 config，所以 autoAliasValue 会算到自己（count=1 仍 ok）。
  */
-function autoAliasModels(ids: string[]): Model[] {
-  const config = loadConfigFile();
-  const batch: Model[] = [];
-  return ids.map((id) => {
-    const alias = resolveAutoAlias(id, config, batch);
-    const m: Model = alias ? { id, alias } : { id };
-    batch.push(m);
-    return m;
-  });
+function registerAutoAliases(
+  config: Config,
+  providerName: string,
+  modelIds: string[],
+): void {
+  for (const id of modelIds) {
+    const value = autoAliasValue(id, providerName, config);
+    if (value) config.aliases[id] = value;
+  }
 }

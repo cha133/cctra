@@ -11,6 +11,8 @@ import { checkCancel } from "../ui/prompts";
 import { success, error as errorOut, warn, info, dim } from "../ui/format";
 import { addPlugin, updatePlugin, removePlugin } from "../core/config";
 import { loadPlugin, clearPluginCache } from "../plugin/loader";
+import { autoAliasValue } from "../core/alias";
+import { isSourceName } from "../core/namespace";
 import type { PluginConfig } from "../types";
 
 export function registerPlugin(program: Command): void {
@@ -66,24 +68,33 @@ export function registerPlugin(program: Command): void {
           errorOut(`Plugin failed to load. Check the file's syntax.`);
           return;
         }
-        // 拉模型列表
-        let models: { id: string; alias?: string }[] = [];
+        // 拉模型列表（plugin 可以通过 PluginModel.alias 声明短名）
+        let pluginModels: { id: string; alias?: string }[] = [];
         if (instance.listModels) {
           try {
             const { makePluginContext } = await import("../plugin/host");
             const ctx = makePluginContext(name, config);
-            models = (await instance.listModels(ctx)).map((m) => ({ id: m.id, alias: m.alias }));
+            pluginModels = (await instance.listModels(ctx)).map((m) => ({ id: m.id, alias: m.alias }));
           } catch (e) {
             warn(`listModels() failed: ${(e as Error).message}`);
           }
         }
-        tempPlugin.models = models;
+        tempPlugin.models = pluginModels.map((m) => ({ id: m.id }));
 
         withConfig((c) => {
           if (c.plugins[name]) updatePlugin(c, tempPlugin);
           else addPlugin(c, tempPlugin);
+          // 注册 plugin 自带的 alias + auto-alias（id 全局唯一时）
+          for (const m of pluginModels) {
+            const full = `${name}/${m.id}`;
+            if (m.alias && c.aliases[m.alias] === undefined && !isSourceName(c, m.alias)) {
+              c.aliases[m.alias] = full;
+            }
+            const auto = autoAliasValue(m.id, name, c);
+            if (auto) c.aliases[m.id] = auto;
+          }
         });
-        success(`Added plugin "${name}" with ${models.length} model(s).`);
+        success(`Added plugin "${name}" with ${pluginModels.length} model(s).`);
       } catch (e) {
         errorOut((e as Error).message);
         process.exit(1);
@@ -122,8 +133,12 @@ export function registerPlugin(program: Command): void {
         console.log(`  ${dim("config:")}  ${JSON.stringify(p.config)}`);
         console.log(`  ${dim("models:")}`);
         for (const m of p.models) {
-          const alias = m.alias ? ` (alias: ${m.alias})` : "";
-          console.log(`    - ${m.id}${alias}`);
+          const full = `${name}/${m.id}`;
+          const aliases = Object.entries(config.aliases)
+            .filter(([, v]) => v === full)
+            .map(([n]) => n);
+          const aliasHint = aliases.length > 0 ? ` ${dim(`(aliases: ${aliases.join(", ")})`)}` : "";
+          console.log(`    - ${m.id}${aliasHint}`);
         }
       });
     });

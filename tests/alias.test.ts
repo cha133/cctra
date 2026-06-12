@@ -1,17 +1,25 @@
 // ============================================================================
-// Auto-alias 决策单元测
+// Alias 系统单元测试：auto-register 算法、resolve 表分支、namespace 防御
 // ============================================================================
 import { describe, test, expect } from "bun:test";
-import { canAutoAlias, resolveAutoAlias } from "../src/core/alias";
+import { canAutoRegisterAlias, autoAliasValue } from "../src/core/alias";
+import { resolveModelRef, ResolveError } from "../src/core/resolve";
+import {
+  isAliasName,
+  isSourceName,
+  isValidAliasName,
+  nameTakenAnywhere,
+} from "../src/core/namespace";
 import type { Config, Model } from "../src/types";
 
 function emptyConfig(): Config {
-  return { port: 3133, providers: {}, plugins: {} };
+  return { port: 3133, providers: {}, plugins: {}, aliases: {} };
 }
 
 function configWithProvider(
   providerName: string,
-  models: Array<{ id: string; alias?: string }>,
+  modelIds: string[],
+  aliases: Record<string, string> = {},
 ): Config {
   return {
     port: 3133,
@@ -24,94 +32,151 @@ function configWithProvider(
         apiFormat: "openai-chat",
         createdAt: 0,
         updatedAt: 0,
-        models: models.map((m) => ({ id: m.id, alias: m.alias })),
+        models: modelIds.map((id) => ({ id })),
       },
     },
     plugins: {},
+    aliases,
   };
 }
 
-describe("canAutoAlias", () => {
-  test("empty config: any id is auto-aliasable", () => {
-    expect(canAutoAlias("foo", emptyConfig())).toBe(true);
+// ---------------------------------------------------------------------------
+
+describe("canAutoRegisterAlias", () => {
+  test("empty config: any id auto-registers", () => {
+    expect(canAutoRegisterAlias("foo", emptyConfig())).toBe(true);
   });
 
-  test("id unique in config: auto-aliasable", () => {
-    const cfg = configWithProvider("a", [{ id: "model-a" }]);
-    expect(canAutoAlias("model-b", cfg)).toBe(true);
+  test("id unique in config: auto-registers", () => {
+    const cfg = configWithProvider("a", ["model-a"]);
+    expect(canAutoRegisterAlias("model-b", cfg)).toBe(true);
   });
 
-  test("id already used as id in other source: blocked", () => {
-    const cfg = configWithProvider("a", [{ id: "deepseek-v4-pro" }]);
-    expect(canAutoAlias("deepseek-v4-pro", cfg)).toBe(false);
+  test("id collides with existing alias name: blocked", () => {
+    const cfg = configWithProvider("a", ["model-a"], { foo: "a/model-a" });
+    expect(canAutoRegisterAlias("foo", cfg)).toBe(false);
   });
 
-  test("id already used as alias in other source: blocked", () => {
-    const cfg = configWithProvider("a", [{ id: "d4", alias: "deepseek-v4-pro" }]);
-    expect(canAutoAlias("deepseek-v4-pro", cfg)).toBe(false);
+  test("id collides with source name: blocked", () => {
+    const cfg = configWithProvider("a", ["model-a"]);
+    expect(canAutoRegisterAlias("a", cfg)).toBe(false);
   });
 
-  test("id used in same source: not blocked (excludeSource)", () => {
-    const cfg = configWithProvider("a", [{ id: "model-a" }]);
-    // 在 a 这个 source 内加另一个 model-a：应允许（excludeSource=a 跳过自己）
-    expect(canAutoAlias("model-a", cfg, "a")).toBe(true);
-  });
-
-  test("empty id: never auto-aliasable", () => {
-    expect(canAutoAlias("", emptyConfig())).toBe(false);
-  });
-
-  test("disabled plugin's models don't block", () => {
+  test("id already used as model.id in other source: blocked", () => {
     const cfg: Config = {
-      port: 3133,
-      providers: {},
-      plugins: {
-        p: {
-          kind: "plugin",
-          name: "p",
-          path: "/x.js",
-          config: {},
-          enabled: false,
-          models: [{ id: "blocked" }],
-        },
-      },
+      ...configWithProvider("a", ["dup"]),
     };
-    expect(canAutoAlias("blocked", cfg)).toBe(true);
+    cfg.providers.b = {
+      kind: "provider",
+      name: "b",
+      endpoint: "x",
+      token: "t",
+      apiFormat: "openai-chat",
+      createdAt: 0,
+      updatedAt: 0,
+      models: [{ id: "dup" }],
+    };
+    expect(canAutoRegisterAlias("dup", cfg)).toBe(false);
+  });
+
+  test("empty id: never auto-registers", () => {
+    expect(canAutoRegisterAlias("", emptyConfig())).toBe(false);
   });
 });
 
-describe("resolveAutoAlias", () => {
-  test("globally unique: returns id", () => {
-    const cfg = configWithProvider("a", [{ id: "existing" }]);
-    expect(resolveAutoAlias("new", cfg)).toBe("new");
+// ---------------------------------------------------------------------------
+
+describe("autoAliasValue", () => {
+  test("globally unique: returns provider/id", () => {
+    const cfg = configWithProvider("ark", ["model-a"]);
+    expect(autoAliasValue("new-id", "ark", cfg)).toBe("ark/new-id");
   });
 
-  test("id collision: returns undefined", () => {
-    const cfg = configWithProvider("a", [{ id: "x" }]);
-    expect(resolveAutoAlias("x", cfg)).toBeUndefined();
+  test("collides with alias: returns null", () => {
+    const cfg = configWithProvider("ark", ["model-a"], { existing: "ark/model-a" });
+    expect(autoAliasValue("existing", "ark", cfg)).toBeNull();
   });
 
-  test("alias collision: returns undefined", () => {
-    const cfg = configWithProvider("a", [{ id: "y", alias: "x" }]);
-    expect(resolveAutoAlias("x", cfg)).toBeUndefined();
-  });
-
-  test("in-batch collision: first wins, second is undefined", () => {
+  test("in-batch dedup", () => {
     const cfg = emptyConfig();
     const batch: Model[] = [];
-    // 模拟 add 流程：连续 add 2 个同名 model
-    const first = resolveAutoAlias("dup", cfg, batch);
-    batch.push({ id: "dup", alias: first });
-    const second = resolveAutoAlias("dup", cfg, batch);
-    expect(first).toBe("dup");
-    expect(second).toBeUndefined();
+    expect(autoAliasValue("dup", "p", cfg, batch)).toBe("p/dup");
+    batch.push({ id: "dup" });
+    expect(autoAliasValue("dup", "p", cfg, batch)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("resolveModelRef — alias table branch", () => {
+  test("alias bound → routes to source/model", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "ark/doubao" });
+    const r = resolveModelRef("cctra-pro", cfg);
+    expect(r?.source.name).toBe("ark");
+    expect(r?.modelId).toBe("doubao");
   });
 
-  test("in-batch with different ids: both auto-aliased", () => {
-    const cfg = emptyConfig();
-    const batch: Model[] = [];
-    expect(resolveAutoAlias("a", cfg, batch)).toBe("a");
-    batch.push({ id: "a", alias: "a" });
-    expect(resolveAutoAlias("b", cfg, batch)).toBe("b");
+  test("alias unbound (value '') → throws is unbound", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "" });
+    expect(() => resolveModelRef("cctra-pro", cfg)).toThrow(/is unbound/);
+  });
+
+  test("alias points to missing model → throws missing model", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "ark/gone" });
+    expect(() => resolveModelRef("cctra-pro", cfg)).toThrow(/missing model/);
+  });
+
+  test("alias points to unknown source → throws unknown source", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "ghost/doubao" });
+    expect(() => resolveModelRef("cctra-pro", cfg)).toThrow(/unknown source/);
+  });
+
+  test("alias with invalid value (no slash) → throws invalid", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "broken" });
+    expect(() => resolveModelRef("cctra-pro", cfg)).toThrow(/invalid value/);
+  });
+
+  test("provider/model fall-through still works alongside aliases", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "ark/doubao" });
+    const r = resolveModelRef("ark/doubao", cfg);
+    expect(r?.source.name).toBe("ark");
+    expect(r?.modelId).toBe("doubao");
+  });
+
+  test("ResolveError is thrown (instanceof check)", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { "cctra-pro": "" });
+    try {
+      resolveModelRef("cctra-pro", cfg);
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ResolveError);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("namespace helpers", () => {
+  test("isSourceName / isAliasName / nameTakenAnywhere", () => {
+    const cfg = configWithProvider("ark", ["doubao"], { foo: "ark/doubao" });
+    expect(isSourceName(cfg, "ark")).toBe(true);
+    expect(isSourceName(cfg, "foo")).toBe(false);
+    expect(isAliasName(cfg, "foo")).toBe(true);
+    expect(isAliasName(cfg, "ark")).toBe(false);
+    expect(nameTakenAnywhere(cfg, "ark")).toBe(true);
+    expect(nameTakenAnywhere(cfg, "foo")).toBe(true);
+    expect(nameTakenAnywhere(cfg, "free")).toBe(false);
+  });
+
+  test("isValidAliasName", () => {
+    expect(isValidAliasName("cctra-pro")).toBe(true);
+    expect(isValidAliasName("a")).toBe(true);
+    expect(isValidAliasName("9-init")).toBe(true);
+    expect(isValidAliasName("")).toBe(false);
+    expect(isValidAliasName("-leading-dash")).toBe(false);
+    expect(isValidAliasName("UPPER")).toBe(false);
+    expect(isValidAliasName("with/slash")).toBe(false);
+    expect(isValidAliasName("a".repeat(64))).toBe(false); // > 63 chars
+    expect(isValidAliasName("a".repeat(63))).toBe(true);
   });
 });

@@ -14,12 +14,11 @@ export interface Source {
 }
 
 // ============================================================================
-// Model：模型元数据
+// Model：模型元数据（短名 / 别名走全局 config.aliases 表，不再绑在 model 上）
 // ============================================================================
 
 export interface Model {
   id: string;
-  alias?: string;
   contextWindow?: number;
   supportsTools?: boolean;
   supportsVision?: boolean;
@@ -58,6 +57,16 @@ export interface PluginConfig extends Source {
 }
 
 // ============================================================================
+// 默认 alias 槽位（首次运行 / 老 config 无 [aliases] 段时注入）
+// ============================================================================
+
+export const DEFAULT_ALIASES = ["cctra-pro", "cctra-flash", "cctra-vision"] as const;
+
+export function buildDefaultAliases(): Record<string, string> {
+  return Object.fromEntries(DEFAULT_ALIASES.map((n) => [n, ""]));
+}
+
+// ============================================================================
 // 总配置（~/.cctra/config.toml 的 schema）
 // ============================================================================
 
@@ -65,10 +74,13 @@ export interface Config {
   port: number;
   providers: Record<string, Provider>;
   plugins: Record<string, PluginConfig>;
+  /** alias 名 → "provider/model" 全名或 "" (unbound) */
+  aliases: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG: Config = {
   port: 3133,
   providers: {},
   plugins: {},
+  aliases: buildDefaultAliases(),
 };

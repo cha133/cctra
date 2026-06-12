@@ -1,7 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { parseTOML, stringifyTOML } from "confbox";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
-import { DEFAULT_CONFIG, type Config, type Provider, type PluginConfig } from "../types";
+import {
+  DEFAULT_CONFIG,
+  buildDefaultAliases,
+  type Config,
+  type Provider,
+  type PluginConfig,
+} from "../types";
 
 /**
  * 从 ~/.cctra/config.toml 加载配置
@@ -27,6 +33,10 @@ export function loadConfigFile(): Config {
     port: data.port ?? DEFAULT_CONFIG.port,
     providers: data.providers ?? {},
     plugins: data.plugins ?? {},
+    aliases:
+      data.aliases && typeof data.aliases === "object" && !Array.isArray(data.aliases)
+        ? (data.aliases as Record<string, string>)
+        : buildDefaultAliases(),
   };
 
   // 兜底：补 kind 字段（手动写的 config 可能漏了）
@@ -38,7 +48,40 @@ export function loadConfigFile(): Config {
     if (p.enabled === undefined) p.enabled = true;
   }
 
+  // 老 config 兼容：把 Model.alias 字段搬到 config.aliases 表
+  migrateLegacyAliases(config);
+
   return config;
+}
+
+/**
+ * 把 Model.alias 字段迁移到 config.aliases 表。
+ *
+ * - 不覆盖用户已写的同名 alias
+ * - 删除 Model 上的 alias 字段（下次 save 自然落盘清掉）
+ * - 幂等：再跑一次空操作
+ */
+function migrateLegacyAliases(config: Config): void {
+  for (const [pname, provider] of Object.entries(config.providers)) {
+    if (!provider.models) provider.models = [];
+    for (const m of provider.models) {
+      const legacy = (m as unknown as { alias?: string }).alias;
+      if (legacy && config.aliases[legacy] === undefined) {
+        config.aliases[legacy] = `${pname}/${m.id}`;
+      }
+      delete (m as unknown as { alias?: string }).alias;
+    }
+  }
+  for (const [pname, plugin] of Object.entries(config.plugins)) {
+    if (!plugin.models) plugin.models = [];
+    for (const m of plugin.models) {
+      const legacy = (m as unknown as { alias?: string }).alias;
+      if (legacy && config.aliases[legacy] === undefined) {
+        config.aliases[legacy] = `${pname}/${m.id}`;
+      }
+      delete (m as unknown as { alias?: string }).alias;
+    }
+  }
 }
 
 /** 把配置写到 ~/.cctra/config.toml */

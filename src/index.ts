@@ -9,6 +9,7 @@ import { registerRm } from "./commands/rm";
 import { registerRename } from "./commands/rename";
 import { registerEdit } from "./commands/edit";
 import { registerAlias } from "./commands/alias";
+import { registerSwitch } from "./commands/switch";
 import { registerPlugin } from "./commands/plugin";
 import { registerServe } from "./commands/serve";
 import pkg from "../package.json";
@@ -26,6 +27,7 @@ registerRm(program);
 registerRename(program);
 registerEdit(program);
 registerAlias(program);
+registerSwitch(program);
 registerPlugin(program);
 registerServe(program);
 

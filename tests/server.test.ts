@@ -19,6 +19,11 @@ function makeTestConfig(mockBaseUrl: string): string {
   return `
 port = 31444
 
+[aliases]
+"b-alias" = "test-sub/model-b"
+"cctra-pro" = "tool-sub/x"
+"cctra-flash" = ""
+
 [providers.test-sub]
 name = "test-sub"
 endpoint = "https://example.com"
@@ -32,7 +37,6 @@ id = "model-a"
 
 [[providers.test-sub.models]]
 id = "model-b"
-alias = "b-alias"
 
 [providers.tool-sub]
 name = "tool-sub"
@@ -162,10 +166,18 @@ describe("HTTP server", () => {
   test("models list", async () => {
     const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/models`);
     expect(res.status).toBe(200);
-    const data = await res.json() as { data: Array<{ id: string }> };
+    const data = await res.json() as { data: Array<{ id: string; owned_by: string; cctra_target?: string | null }> };
     const ids = data.data.map((m) => m.id);
     expect(ids).toContain("test-sub/model-a");
-    expect(ids).toContain("test-sub/b-alias");
+    // alias 应作为顶层 id 暴露，owned_by 标记为 cctra-alias
+    const cctraPro = data.data.find((m) => m.id === "cctra-pro");
+    expect(cctraPro).toBeDefined();
+    expect(cctraPro!.owned_by).toBe("cctra-alias");
+    expect(cctraPro!.cctra_target).toBe("tool-sub/x");
+    // unbound alias 也出现，cctra_target = null
+    const cctraFlash = data.data.find((m) => m.id === "cctra-flash");
+    expect(cctraFlash).toBeDefined();
+    expect(cctraFlash!.cctra_target).toBeNull();
   });
 
   test("chat completions without model → 400", async () => {
@@ -216,24 +228,49 @@ describe("HTTP server", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  test("bound alias routes to target model", async () => {
+    // cctra-pro 在 fixture 里绑到 tool-sub/x（mock 上游的 stream-tool-call）
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cctra-pro",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+    // 不需要校验 body，只要到上游就行（status 200 已说明 resolveModelRef 命中）
+    await res.body?.cancel();
+  });
+
+  test("unbound alias → 400 with `is unbound` message", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "cctra-flash",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: { message: string } };
+    expect(data.error.message).toMatch(/is unbound/);
+  });
 });
 
 describe("Model resolve", () => {
-  test("sub/model with alias", () => {
-    const config = loadConfigFile();
-    const r = resolveModelRef("test-sub/b-alias", config);
-    expect(r?.modelId).toBe("model-b");
-  });
-
   test("sub/model with id", () => {
     const config = loadConfigFile();
     const r = resolveModelRef("test-sub/model-a", config);
     expect(r?.modelId).toBe("model-a");
   });
 
-  test("global alias", () => {
+  test("global alias from [aliases] table", () => {
     const config = loadConfigFile();
     const r = resolveModelRef("b-alias", config);
+    expect(r?.source.name).toBe("test-sub");
     expect(r?.modelId).toBe("model-b");
   });
 
@@ -241,6 +278,12 @@ describe("Model resolve", () => {
     const config = loadConfigFile();
     const r = resolveModelRef("unknown", config);
     expect(r).toBeNull();
+  });
+
+  test("provider/alias is NOT supported in new schema (only provider/id)", () => {
+    // 旧行为允许 "test-sub/b-alias"，新设计明确只接受 provider/id
+    const config = loadConfigFile();
+    expect(resolveModelRef("test-sub/b-alias", config)).toBeNull();
   });
 });
 

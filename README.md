@@ -2,7 +2,7 @@
 
 > Local LLM provider protocol converter + plugin host
 
-`cctra` runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages**, with **per-model aliases** and **local-path plugin** support for non-standard upstream auth (OAuth, mTLS, etc.).
+`cctra` runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages**, with a **global alias table** (rebind without restarting the client) and **local-path plugin** support for non-standard upstream auth (OAuth, mTLS, etc.).
 
 ## Quick start
 
@@ -39,42 +39,40 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 | Claude Code | `http://127.0.0.1:3133/anthropic` |
 | OpenAI SDK / Codex / Cursor | `http://127.0.0.1:3133/v1` |
 
-## Model aliases
+## Aliases — the only short-name system
 
-When you add a model, cctra **auto-generates a short alias equal to the model id** (as long as that id is unique across all your sources). That alias works as the `model` field in client requests — you don't need to type the full `provider/model` name every time.
+cctra has one place where every short name lives: the **`[aliases]` table** in `~/.cctra/config.toml`. An alias is a name → `provider/model` pointer; clients send the alias as their `model` field and cctra routes to the upstream.
+
+Three things to know:
+
+1. **Auto-generated**: when you `cctra add` a provider, every model whose id is globally unique gets `aliases[id] = "provider/id"` for free — clients can use the short id immediately, no `provider/` prefix needed.
+2. **Manual slots for stable client config**: cctra pre-seeds three empty aliases — `cctra-pro` / `cctra-flash` / `cctra-vision`. Bind them with `cctra switch <name>` and your Claude Code / Codex configs can hard-code those names forever; switching upstreams is a one-line CLI call that hot-reloads (no client restart).
+3. **Add your own**: `cctra alias add <name>` for empty slots, `cctra alias <name> <target>` to set in one shot.
 
 ```bash
-# Add a provider
-cctra add   # pick Ark Coding Plan + deepseek-v4-pro
-#   → config.toml now has: id="deepseek-v4-pro", alias="deepseek-v4-pro"
-#   → you can use "deepseek-v4-pro" as the model name in any client
+cctra add                       # walks the wizard, auto-aliases unique ids
+cctra alias                     # list all aliases (bound + unbound)
+cctra switch cctra-pro          # interactive: pick a model from the dropdown
+cctra switch cctra-pro ark/doubao-seed-1-6   # non-interactive
+cctra alias rm cctra-vision     # remove a slot you don't use
 ```
 
-```bash
-# Add another source with a model of the same id
-cctra add   # pick DeepSeek + deepseek-v4-pro
-#   → alias collision: the first one keeps it, the second has no alias
-#   → access the first via short alias "deepseek-v4-pro"
-#   → access the second only via the full name "deepseek/deepseek-v4-pro"
-```
-
-To inspect the current alias → full name mapping:
+`cctra ls` shows everything at a glance:
 
 ```bash
 cctra ls
-# ┌─────────────────┬──────────────────────────────────────┬──────────────────┐
-# │ ALIAS           │ FULL NAME                            │ SOURCE           │
-# ├─────────────────┼──────────────────────────────────────┼──────────────────┤
-# │ deepseek-v4-pro │ ark-coding-plan/deepseek-v4-pro      │ Ark Coding Plan  │
-# │ d3              │ ark-coding-plan/deepseek-v3          │ Ark Coding Plan  │
-# │ (none)          │ deepseek/deepseek-v4-pro             │ DeepSeek         │
-# └─────────────────┴──────────────────────────────────────┴──────────────────┘
-```
-
-To override the auto-generated alias, use `cctra alias`:
-
-```bash
-cctra alias ark-coding-plan/deepseek-v4-pro d4p
+# ALIASES
+#   cctra-pro         → ark-sub/doubao-seed-1-6   [Ark Sub]
+#   doubao-seed-1-6   → ark-sub/doubao-seed-1-6   [Ark Sub]
+#   sonnet            → or/anthropic/claude-3.5   [OpenRouter]
+#
+# UNBOUND
+#   cctra-flash
+#   cctra-vision
+#
+# OTHER MODELS
+#   ark-sub/doubao-1-5-pro    [Ark Sub]
+#   ark-sub/doubao-1-5-vision [Ark Sub]
 ```
 
 ## Plugin system
@@ -109,12 +107,17 @@ See `examples/plugins/` for working examples.
 
 ```
 cctra add                       # interactive provider wizard
-cctra edit <name>               # edit models (multiselect toggle)
-cctra alias <model> [<new>]     # show / set / clear model alias
-cctra ls                        # list all models (alias → full name)
+cctra edit <name>               # edit models on a provider (multiselect)
+cctra alias                     # list all aliases (bound + unbound)
+cctra alias <name>              # show what an alias points to
+cctra alias <name> <target>     # set/create alias (target is `provider/model` or another alias)
+cctra alias add <name>          # create an empty alias slot
+cctra alias rm <name>           # remove an alias
+cctra switch [<name>] [<tgt>]   # interactive switch (prompts when args omitted)
+cctra ls                        # list aliases + models
 cctra show <name>               # show provider / plugin details
-cctra rm <name>                 # remove provider / plugin / model
-cctra rename <old> <new>        # rename provider
+cctra rm <name>                 # remove provider / plugin / model (unbinds related aliases)
+cctra rename <old> <new>        # rename provider (updates alias values automatically)
 cctra plugin add <name> <path>
 cctra plugin ls / show / enable / disable / rm
 cctra serve [--port N]          # foreground HTTP server
@@ -132,7 +135,8 @@ Plugin configs go in `~/.cctra/plugins/<name>/config.json`.
 - `src/convert/` — bidirectional protocol conversions
 - `src/server/` — Bun.serve() routes, upstream forwarding
 - `src/plugin/` — local-path plugin loader + author contract
-- `src/core/alias.ts` — auto-alias 决策（id 全局唯一 → 静默设 alias）
+- `src/core/resolve.ts` — `provider/model` and global `[aliases]` table resolution
+- `src/core/alias.ts` — auto-alias decision (id globally unique → silent `aliases[id] = "provider/id"`)
 
 ## Credits
 

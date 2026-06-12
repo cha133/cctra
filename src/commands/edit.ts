@@ -9,8 +9,8 @@ import { withConfig } from "./shared";
 import { getProvider, loadConfigFile } from "../core/config";
 import { fetchUpstreamModels } from "../core/model-fetch";
 import { fetchOpenRouterModels } from "../core/openrouter-models";
-import { resolveAutoAlias } from "../core/alias";
-import type { Model, Provider } from "../types";
+import { autoAliasValue } from "../core/alias";
+import type { Provider } from "../types";
 
 export function registerEdit(program: Command): void {
   program
@@ -143,16 +143,21 @@ async function editProviderModels(provider: Provider): Promise<void> {
     const target = getProvider(config, provider.name);
     if (!target) throw new Error(`Provider "${provider.name}" no longer exists.`);
 
-    // 删
+    // 删：先抓 fullName，过滤完后扫 aliases unbound 掉指向被删 model 的项
+    const removedFullNames = removed.map((m) => `${provider.name}/${m.id}`);
     target.models = target.models.filter((m) => selected.includes(m.id));
-
-    // 加
-    const newBatch: Model[] = [...target.models];
-    for (const id of addedIds) {
-      const alias = resolveAutoAlias(id, config, newBatch, provider.name);
-      newBatch.push({ id, alias });
+    for (const [aname, val] of Object.entries(config.aliases)) {
+      if (removedFullNames.includes(val)) config.aliases[aname] = "";
     }
-    target.models = newBatch;
+
+    // 加：先 push model，再算 auto-alias（要求 model 已经在 config 里）
+    for (const id of addedIds) {
+      target.models.push({ id });
+    }
+    for (const id of addedIds) {
+      const value = autoAliasValue(id, provider.name, config);
+      if (value) config.aliases[id] = value;
+    }
 
     // 有变更才刷新 updatedAt
     if (removed.length > 0 || addedIds.length > 0) {
