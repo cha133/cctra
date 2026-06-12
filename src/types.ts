@@ -79,7 +79,7 @@ export interface Config {
 }
 
 export const DEFAULT_CONFIG: Config = {
-  port: 3133,
+  port: 3133,                  // 生产默认；集成测试用 31444（tests/server.test.ts，分离避免抢端口）
   providers: {},
   plugins: {},
   aliases: buildDefaultAliases(),
