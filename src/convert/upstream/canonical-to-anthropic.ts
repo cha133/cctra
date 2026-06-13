@@ -1,12 +1,22 @@
 // ============================================================================
 // Canonical → Anthropic Messages 请求（发给 Anthropic 上游用）
 // ============================================================================
-import type { CanonicalRequest, CanonicalContentBlock } from "../../canonical/types";
+import type { CanonicalRequest, CanonicalContentBlock, StopReason } from "../../canonical/types";
 import { mergeExtras } from "../common/extras";
+
+// Anthropic 合法 stop_reason 值：end_turn | max_tokens | stop_sequence | tool_use | refusal
+// canonical StopReason 里的 "error" 必须落到 refusal（上游 content_filter 等价）
+export type AnthropicStopReason = "end_turn" | "max_tokens" | "stop_sequence" | "tool_use" | "refusal";
+
+export function mapStopReasonToAnthropic(r: StopReason): AnthropicStopReason {
+  if (r === "error") return "refusal";
+  return r;
+}
 
 interface AnthropicUpstreamRequest {
   model: string;
-  system?: string;
+  // system 可以是 string（无 per-block 元数据时）或 Array<{ type: "text"; text: string; ... }>（带 cache_control 等 extras 时）
+  system?: string | Array<{ type: "text"; text: string; [k: string]: unknown }>;
   messages: Array<{
     role: "user" | "assistant";
     content: string | Array<AnthropicContentBlock>;
@@ -19,20 +29,27 @@ interface AnthropicUpstreamRequest {
   stream: boolean;
   // 让 Anthropic thinking 模型按 effort 估算预算（粗略映射）
   thinking?: { type: "enabled"; budget_tokens: number };
+  // forward-compat: 顶层 extras.anthropic（metadata / context_management / mcp_servers 等）一并 spread
+  [k: string]: unknown;
 }
 
+// 每个变体都加 `[k: string]: unknown` —— 允许 cache_control 等 forward-compat 字段在 wire 出现
+// （mergeExtras 会注入；TS 需要知道这是合法的）
 type AnthropicContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string } }
-  | { type: "document"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string } }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean }
-  | { type: "thinking"; thinking: string; signature?: string };
+  | { type: "text"; text: string; [k: string]: unknown }
+  | { type: "image"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string }; [k: string]: unknown }
+  | { type: "document"; source: { type: "base64" | "url"; media_type: string; data?: string; url?: string }; [k: string]: unknown }
+  | { type: "tool_use"; id: string; name: string; input: unknown; [k: string]: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean; [k: string]: unknown }
+  | { type: "thinking"; thinking: string; signature?: string; [k: string]: unknown };
 
 export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUpstreamRequest {
   const messages: AnthropicUpstreamRequest["messages"] = req.messages.map((m) => {
-    const msgContent = m.content.length === 1 && m.content[0]?.type === "text"
-      ? m.content[0].text
+    // 短路条件：单 text block 且无 extras → 直接 emit 字符串（wire 简洁）
+    // 有 extras → 必须走数组形态才能透传 cache_control / redacted_data 等
+    const first = m.content[0];
+    const msgContent = m.content.length === 1 && first?.type === "text" && !first.extras
+      ? first.text
       : m.content.map(blockToAnthropic);
     return {
       role: m.role,
@@ -42,9 +59,26 @@ export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUp
     };
   });
 
-  let system: string | undefined;
-  if (typeof req.system === "string") system = req.system;
-  else if (Array.isArray(req.system)) system = req.system.map((b) => b.type === "text" ? b.text : "").join("");
+  // system：所有 block 都没 extras → flatten 成 string（保持现状，零回归）；
+  // 任意 block 有 extras → 输出数组形态，per-block 字段完整保留（cache_control 等）
+  let system: string | Array<{ type: "text"; text: string; [k: string]: unknown }> | undefined;
+  if (typeof req.system === "string") {
+    system = req.system;
+  } else if (Array.isArray(req.system)) {
+    const hasExtras = req.system.some((b) => b.extras && Object.keys(b.extras).length > 0);
+    if (!hasExtras) {
+      system = req.system.map((b) => b.type === "text" ? b.text : "").join("");
+    } else {
+      system = req.system.map((b) => {
+        const flat: { type: "text"; text: string; [k: string]: unknown } = {
+          type: "text" as const,
+          text: b.type === "text" ? b.text : "",
+        };
+        if (b.extras?.anthropic) Object.assign(flat, b.extras.anthropic);
+        return flat;
+      });
+    }
+  }
 
   return {
     model: req.model,
@@ -57,6 +91,8 @@ export function canonicalToAnthropicUpstream(req: CanonicalRequest): AnthropicUp
     stop_sequences: req.stopSequences,
     stream: req.stream,
     thinking: req.reasoning?.effort ? { type: "enabled", budget_tokens: effortToBudget(req.reasoning.effort) } : undefined,
+    // 顶层 extras spread（metadata / context_management / mcp_servers 等）
+    ...(req.extras?.anthropic ?? {}),
   };
 }
 

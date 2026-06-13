@@ -1,6 +1,6 @@
 {
   "name": "cctra",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Local LLM provider protocol converter + plugin host. Runs a local HTTP server on 127.0.0.1:3133 that translates between OpenAI Chat / OpenAI Responses / Anthropic Messages, with a global alias table (`cctra switch` to rebind without restarting the client) and local-path plugin support.",
   "type": "module",
   "bin": {

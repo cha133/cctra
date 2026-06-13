@@ -2,6 +2,7 @@
 // Canonical → Anthropic Messages 响应
 // ============================================================================
 import type { CanonicalResponse, StopReason } from "../../canonical/types";
+import { mapStopReasonToAnthropic, type AnthropicStopReason } from "../upstream/canonical-to-anthropic";
 
 interface AnthropicResponse {
   id: string;
@@ -9,7 +10,7 @@ interface AnthropicResponse {
   role: "assistant";
   model: string;
   content: Array<{ type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown }>;
-  stop_reason: StopReason | null;
+  stop_reason: AnthropicStopReason | null;
   stop_sequence: string | null;
   usage: {
     input_tokens: number;
@@ -50,7 +51,8 @@ export function canonicalToAnthropicResponse(res: CanonicalResponse): AnthropicR
     role: "assistant",
     model: res.model,
     content,
-    stop_reason: res.stopReason,
+    // canonical "error" → Anthropic "refusal"（最接近的合法值；上游 content_filter 等价场景）
+    stop_reason: mapStopReasonToAnthropic(res.stopReason as StopReason),
     stop_sequence: null,
     usage: {
       input_tokens: res.usage.inputTokens,

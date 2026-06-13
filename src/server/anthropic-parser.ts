@@ -10,6 +10,7 @@ interface AnthropicUpstreamResponse {
     | { type: "text"; text: string }
     | { type: "tool_use"; id: string; name: string; input: unknown }
     | { type: "thinking"; thinking: string; signature?: string }
+    | { type: "redacted_thinking"; data: string }
   >;
   stop_reason?: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use";
   usage?: {
@@ -27,6 +28,10 @@ export function parseAnthropicUpstreamResponse(raw: unknown, model: string): Can
     if (b.type === "text") blocks.push({ type: "text", text: b.text });
     else if (b.type === "tool_use") blocks.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
     else if (b.type === "thinking") blocks.push({ type: "thinking", thinking: b.thinking, signature: b.signature });
+    else if (b.type === "redacted_thinking") {
+      // 降级为占位 text + extras 保留 data（与 inbound 对称；不引入新 canonical 变体）
+      blocks.push({ type: "text", text: "[redacted_thinking]", extras: { anthropic: { data: b.data } } });
+    }
   }
 
   return {

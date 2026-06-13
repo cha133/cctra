@@ -391,3 +391,220 @@ describe("Streaming formatter error event + terminal suppression", () => {
     expect(stopOut).toEqual([]);
   });
 });
+
+// ============================================================================
+// Anthropic 路径保真：top-level / block-level / system extras + 未知 type 兜底 + stop_reason 映射
+// 上一轮审计发现的 5 个洞 + TODO.md "5min" 修复
+// ============================================================================
+
+describe("Anthropic passthrough fidelity", () => {
+  test("top-level unknown fields (e.g. metadata) land in extras.anthropic and round-trip", () => {
+    const req = {
+      model: "claude-3",
+      messages: [{ role: "user" as const, content: "hi" }],
+      max_tokens: 100,
+      metadata: { user_id: "u-42" },
+      context_management: { edits: [] },
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    expect(can.extras?.anthropic).toEqual({
+      metadata: { user_id: "u-42" },
+      context_management: { edits: [] },
+    });
+
+    const upstream = canonicalToAnthropicUpstream(can);
+    expect(upstream.metadata).toEqual({ user_id: "u-42" });
+    expect(upstream.context_management).toEqual({ edits: [] });
+  });
+
+  test("block-level cache_control on text round-trips (prompt caching)", () => {
+    const req = {
+      model: "claude-3",
+      messages: [{
+        role: "user" as const,
+        content: [{
+          type: "text" as const,
+          text: "hello",
+          cache_control: { type: "ephemeral" },
+        }],
+      }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    const upstream = canonicalToAnthropicUpstream(can);
+    expect(upstream.messages[0]?.content).toEqual([{
+      type: "text",
+      text: "hello",
+      cache_control: { type: "ephemeral" },
+    }]);
+  });
+
+  test("block-level cache_control on tool_result round-trips (most impactful caching case)", () => {
+    const req = {
+      model: "claude-3",
+      messages: [{
+        role: "user" as const,
+        content: [{
+          type: "tool_result" as const,
+          tool_use_id: "tu-1",
+          content: "result data",
+          cache_control: { type: "ephemeral" },
+        }],
+      }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    const upstream = canonicalToAnthropicUpstream(can);
+    expect(upstream.messages[0]?.content).toEqual([{
+      type: "tool_result",
+      tool_use_id: "tu-1",
+      content: "result data",
+      cache_control: { type: "ephemeral" },
+    }]);
+  });
+
+  test("system array with cache_control round-trips: upstream emits array form, cache_control preserved", () => {
+    const req = {
+      model: "claude-3",
+      system: [
+        { type: "text" as const, text: "first chunk", cache_control: { type: "ephemeral" } },
+        { type: "text" as const, text: "second chunk" },
+      ],
+      messages: [{ role: "user" as const, content: "hi" }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    const upstream = canonicalToAnthropicUpstream(can);
+    expect(Array.isArray(upstream.system)).toBe(true);
+    expect(upstream.system).toEqual([
+      { type: "text", text: "first chunk", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "second chunk" },
+    ]);
+  });
+
+  test("system array without cache_control flattens to string (back-compat, zero regression)", () => {
+    const req = {
+      model: "claude-3",
+      system: [{ type: "text" as const, text: "a" }, { type: "text" as const, text: "b" }],
+      messages: [{ role: "user" as const, content: "hi" }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    const upstream = canonicalToAnthropicUpstream(can);
+    expect(upstream.system).toBe("ab");
+  });
+
+  test("redacted_thinking inbound → canonical placeholder + extras; upstream emits text", () => {
+    const req = {
+      model: "claude-3",
+      messages: [{
+        role: "assistant" as const,
+        content: [{ type: "redacted_thinking" as const, data: "encrypted-blob-xyz" }],
+      }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    expect(can.messages[0]?.content[0]).toEqual({
+      type: "text",
+      text: "[redacted_thinking]",
+      extras: { anthropic: { data: "encrypted-blob-xyz" } },
+    });
+    const upstream = canonicalToAnthropicUpstream(can);
+    // 单 text block 但有 extras → 不走字符串短路，必须 emit 数组形态才能透传 data
+    expect(upstream.messages[0]?.content).toEqual([{
+      type: "text",
+      text: "[redacted_thinking]",
+      data: "encrypted-blob-xyz",
+    }]);
+  });
+
+  test("unknown block type is preserved as text + extras (forward-compat, no silent drop)", () => {
+    const req = {
+      model: "claude-3",
+      messages: [{
+        role: "user" as const,
+        content: [{
+          // 假装是未来 Anthropic 加的 server_tool_use 之类
+          type: "foo_bar_block" as const,
+          custom_field: "preserve-me",
+        } as never],
+      }],
+      max_tokens: 100,
+    };
+    const can = anthropicToCanonical(req as Parameters<typeof anthropicToCanonical>[0]);
+    expect(can.messages[0]?.content[0]).toEqual({
+      type: "text",
+      text: "[unknown_block:foo_bar_block]",
+      extras: { anthropic: { custom_field: "preserve-me" } },
+    });
+    const upstream = canonicalToAnthropicUpstream(can);
+    // 单 text block 但有 extras → 不走字符串短路，emit 数组形态以透传 custom_field
+    expect(upstream.messages[0]?.content).toEqual([{
+      type: "text",
+      text: "[unknown_block:foo_bar_block]",
+      custom_field: "preserve-me",
+    }]);
+  });
+
+  test("parseAnthropicUpstreamResponse handles redacted_thinking", () => {
+    const raw = {
+      id: "msg-1",
+      model: "claude-3",
+      content: [{ type: "redacted_thinking", data: "encrypted-blob-xyz" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 10, output_tokens: 2 },
+    };
+    const res = parseAnthropicUpstreamResponse(raw, "claude-3");
+    expect(res.content[0]).toEqual({
+      type: "text",
+      text: "[redacted_thinking]",
+      extras: { anthropic: { data: "encrypted-blob-xyz" } },
+    });
+  });
+});
+
+// ============================================================================
+// TODO.md "5min" 修复：stop_reason error → refusal（canonical / streaming）
+// ============================================================================
+
+describe("Anthropic stop_reason mapping (error → refusal)", () => {
+  test("canonicalToAnthropicResponse maps stopReason=error to stop_reason=refusal", () => {
+    const res = canonicalToAnthropicResponse({
+      id: "test",
+      model: "claude-3",
+      content: [{ type: "text" as const, text: "" }],
+      stopReason: "error",
+      usage: { inputTokens: 1, outputTokens: 0 },
+    });
+    if (!("content" in res)) throw new Error("expected success shape");
+    expect(res.stop_reason).toBe("refusal");
+  });
+
+  test("canonicalToAnthropicResponse passes through legal stop_reasons unchanged", () => {
+    for (const sr of ["end_turn", "max_tokens", "stop_sequence", "tool_use"] as const) {
+      const res = canonicalToAnthropicResponse({
+        id: "test",
+        model: "claude-3",
+        content: [{ type: "text" as const, text: "" }],
+        stopReason: sr,
+        usage: { inputTokens: 1, outputTokens: 0 },
+      });
+      if (!("content" in res)) throw new Error("expected success shape");
+      expect(res.stop_reason).toBe(sr);
+    }
+  });
+
+  test("AnthropicStreamFormatter maps message_delta.stop_reason=error to refusal in SSE output", () => {
+    const { AnthropicStreamFormatter } = require("../src/convert/streaming/outbound/format-anthropic");
+    const f = new AnthropicStreamFormatter();
+    const out = f.format({
+      type: "message_delta",
+      delta: { stop_reason: "error", stop_sequence: null },
+    });
+    expect(out).toHaveLength(1);
+    const event = out[0]!;
+    const dataLine = event.split("\n").find((l: string) => l.startsWith("data: "))!;
+    const parsed = JSON.parse(dataLine.slice("data: ".length)) as { delta: { stop_reason: string } };
+    expect(parsed.delta.stop_reason).toBe("refusal");
+  });
+});
