@@ -4,7 +4,7 @@
 import { Command } from "commander";
 import { joinUrl, stripCompatSuffix } from "../core/model-fetch";
 import { bold, dim, green, red } from "../ui/format";
-import { padEndStr } from "../ui/table";
+import { padEndStr, printSection } from "../ui/table";
 
 const TIMEOUT_MS = 5000;
 
@@ -60,14 +60,14 @@ export function registerTest(program: Command): void {
 
       // 5. 列出模型
       if (modelsResult.models.length > 0) {
-        console.log();
+        const label = modelCountLabel(modelsResult.models.length);
         const show = modelsResult.models.slice(0, 20);
-        for (const m of show) {
-          console.log(`  ${dim("•")} ${m}`);
-        }
+        const rows = show.map((m) => dim(`• ${m}`));
         if (modelsResult.models.length > 20) {
-          console.log(`  ${dim(`... and ${modelsResult.models.length - 20} more`)}`);
+          rows.push(dim(`  ... and ${modelsResult.models.length - 20} more`));
         }
+        console.log();
+        printSection(label, rows);
       }
     });
 }
@@ -225,21 +225,15 @@ async function probeResponses(
 
 function printResults(results: ProbeResult[]): void {
   const labelW = Math.max(...results.map((r) => r.api.length));
-  const pad = labelW + 4;
-
-  // 表头
-  const sep = "─".repeat(pad + 8);
-  console.log(`┌${sep}┐`);
-  console.log(`│ ${bold(padEndStr("API", pad))} │ ${bold("Status")} │`);
-  console.log(`├${sep}┤`);
-
   for (const r of results) {
     const status = r.ok ? green("✔") : red("✖");
-    const detail = r.detail ? dim(` (${r.detail})`) : "";
-    console.log(`│ ${padEndStr(r.api, pad)} │ ${status}     │${detail}`);
+    const detail = r.detail ? dim(`  (${r.detail})`) : "";
+    console.log(`  ${padEndStr(r.api, labelW)}  ${status}${detail}`);
   }
+}
 
-  console.log(`└${sep}┘`);
+function modelCountLabel(count: number): string {
+  return count === 1 ? "1 model" : `${count} models`;
 }
 
 // ---------------------------------------------------------------------------
