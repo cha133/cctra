@@ -9,6 +9,8 @@
 //   POST /chat/track-abort         记录请求是否被 abort
 //   POST /chat/error-401/429/500   返回 4xx/5xx 错误（验证错误码透传）
 //   POST /chat/stream-error        返回 200 + SSE error event（验证流中错不发终止事件）
+//   POST /anthropic/messages/echo  回显 system + messages 数（cross-format 测试用）
+//   POST /v1/responses/echo        回显 instructions + input 数（cross-format 测试用）
 //   GET  /v1/models                返回固定模型列表
 // ============================================================================
 
@@ -60,6 +62,8 @@ export function startMockUpstream(): MockUpstreamHandle {
       if (path === "/chat/error-429") return chatErrorResponse(429, "Rate limit exceeded");
       if (path === "/chat/error-500") return chatErrorResponse(500, "Internal server error");
       if (path === "/chat/stream-error") return chatStreamError();
+      // Anthropic Messages 路径（cross-format 测试用：验 cctra 转发到 Anthropic-messages 上游）
+      if (path === "/anthropic/messages/echo") return anthropicEcho(body);
       // OpenAI Responses 路径（验证 L.2 上游协议修复）
       if (path === "/v1/responses/echo") return responsesEcho(body);
       if (path === "/v1/responses/stream-text") return responsesStreamText();
@@ -215,6 +219,34 @@ function chatStreamError(): Response {
   });
   return new Response(stream, {
     headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+// ---------- Anthropic Messages 模拟 ----------
+
+/** 从 Anthropic request body 提取 system 文本（兼容 string 或 array-of-blocks 形态） */
+function extractSystemText(body: unknown): string {
+  const sys = (body as { system?: string | Array<{ text?: string }> } | null)?.system;
+  if (typeof sys === "string") return sys;
+  if (Array.isArray(sys)) return sys.map((b) => b?.text ?? "").join("");
+  return "";
+}
+
+/** 非流式：回显 system + messages 数作为 output_text（cross-format 测试用） */
+function anthropicEcho(body: unknown): Response {
+  const sysText = extractSystemText(body);
+  const inputCount = Array.isArray((body as { messages?: unknown[] } | null)?.messages)
+    ? (body as { messages: unknown[] }).messages.length
+    : 0;
+  return Response.json({
+    id: "msg_test_echo",
+    type: "message",
+    role: "assistant",
+    model: "mock-anthropic",
+    content: [{ type: "text", text: `echo: ${sysText} (input_items=${inputCount})` }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 5, output_tokens: 10 },
   });
 }
 

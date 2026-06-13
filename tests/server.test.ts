@@ -134,6 +134,55 @@ updatedAt = 1700000000000
 
 [[providers.stream-error-sub.models]]
 id = "x"
+
+# Cross-format 集成测试 fixture（0.6.1）：覆盖 9/9 协议组合中缺的 4 个
+[providers.anthropic-to-chat-sub]
+name = "anthropic-to-chat-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/echo-body"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.anthropic-to-chat-sub.models]]
+id = "claude-test"
+
+[providers.chat-to-anthropic-sub]
+name = "chat-to-anthropic-sub"
+endpoint = "${mockBaseUrl}"
+messagesPath = "/anthropic/messages/echo"
+token = "mock-token"
+apiFormat = "anthropic-messages"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.chat-to-anthropic-sub.models]]
+id = "claude-test"
+
+[providers.responses-to-anthropic-sub]
+name = "responses-to-anthropic-sub"
+endpoint = "${mockBaseUrl}"
+messagesPath = "/anthropic/messages/echo"
+token = "mock-token"
+apiFormat = "anthropic-messages"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.responses-to-anthropic-sub.models]]
+id = "claude-test"
+
+[providers.responses-to-chat-sub]
+name = "responses-to-chat-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/echo-body"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.responses-to-chat-sub.models]]
+id = "claude-test"
 `;
 }
 
@@ -505,6 +554,96 @@ describe("Cross-format upstream: openai-responses", () => {
     const text = data.output[0]!.content[0]!.text;
     // input 是 string 时会被规范成 1 个 user message
     expect(text).toMatch(/^echo: test instruction \(input_items=1\)/);
+  });
+});
+
+// ============================================================================
+// Cross-format 集成测试（0.6.1）：补 9/9 协议组合里缺的 4 个
+// - Anthropic client × Chat upstream        (复用 /chat/echo-body)
+// - Chat client × Anthropic upstream        (新 /anthropic/messages/echo)
+// - Responses client × Anthropic upstream   (新 /anthropic/messages/echo)
+// - Responses client × Chat upstream        (复用 /chat/echo-body)
+// ============================================================================
+
+describe("Cross-format upstream: openai-chat", () => {
+  test("Anthropic client → cctra → Chat upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic-to-chat-sub/claude-test",
+        system: "MARKER_A2C",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { content: Array<{ type: string; text?: string }>; stop_reason: string };
+    const textBlock = data.content.find((b) => b.type === "text");
+    expect(textBlock).toBeDefined();
+    // /chat/echo-body 是 JSON.stringify(body) → 系统消息文本会出现在回显里
+    expect(textBlock!.text).toContain("MARKER_A2C");
+    // 0.5.1 修复：上游合法 stop_reason 应直接透传
+    expect(data.stop_reason).toBe("end_turn");
+  });
+
+  test("Responses client → cctra → Chat upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-to-chat-sub/claude-test",
+        instructions: "MARKER_R2C",
+        input: "user message",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { output: Array<{ type: string; content: Array<{ type: string; text: string }> }> };
+    expect(data.output[0]!.type).toBe("message");
+    const text = data.output[0]!.content[0]!.text;
+    // instructions 会变成 Chat system message，回显里包含 MARKER_R2C
+    expect(text).toContain("MARKER_R2C");
+  });
+});
+
+describe("Cross-format upstream: anthropic-messages", () => {
+  test("Chat client → cctra → Anthropic upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "chat-to-anthropic-sub/claude-test",
+        messages: [
+          { role: "system", content: "MARKER_C2A" },
+          { role: "user", content: "hi" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { choices: Array<{ message: { content: string }; finish_reason: string }> };
+    // /anthropic/messages/echo 返 "echo: <system> (input_items=N)" 格式
+    // 注意：Chat 客户端发的 system message 在 Anthropic outbound 时被提到顶层 system 字段，
+    // 所以 messages[] 只剩 1 条 user
+    expect(data.choices[0]!.message.content).toMatch(/^echo: MARKER_C2A \(input_items=1\)/);
+    expect(data.choices[0]!.finish_reason).toBe("stop");
+  });
+
+  test("Responses client → cctra → Anthropic upstream (non-stream)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-to-anthropic-sub/claude-test",
+        instructions: "MARKER_R2A",
+        input: "user message",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { output: Array<{ type: string; content: Array<{ type: string; text: string }> }> };
+    expect(data.output[0]!.type).toBe("message");
+    const text = data.output[0]!.content[0]!.text;
+    // input 是 string 时被规范成 1 个 user message
+    expect(text).toMatch(/^echo: MARKER_R2A \(input_items=1\)/);
   });
 });
 

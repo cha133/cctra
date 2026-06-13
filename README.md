@@ -30,15 +30,6 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 | OpenAI Models | `GET /v1/models` |
 | Health | `GET /healthz` |
 
-### Client configuration
-
-⚠️ **baseURL must include the protocol namespace prefix**:
-
-| Client | baseURL |
-|---|---|
-| Claude Code | `http://127.0.0.1:3133/anthropic` |
-| OpenAI SDK / Codex / Cursor | `http://127.0.0.1:3133/v1` |
-
 ## Aliases — the only short-name system
 
 cctra has one place where every short name lives: the **`[aliases]` table** in `~/.cctra/config.toml`. An alias is a name → `provider/model` pointer; clients send the alias as their `model` field and cctra routes to the upstream.
@@ -74,6 +65,60 @@ cctra ls
 #   ark-sub/doubao-1-5-pro    [Ark Sub]
 #   ark-sub/doubao-1-5-vision [Ark Sub]
 ```
+
+## Client integration
+
+Each client picks its `baseURL` + `model` field to hit the right protocol endpoint. Two clients that speak the same protocol (e.g. Claude Code and any other Anthropic-SDK-based client) use the same `baseURL` — only the `model` field varies.
+
+> ⚠️ **baseURL must include the protocol namespace prefix.** Pointing a Chat-Completions client at `/anthropic` (or vice-versa) will hit the wrong route and fail.
+
+### Claude Code
+
+```bash
+export ANTHROPIC_BASE_URL=http://127.0.0.1:3133/anthropic
+export ANTHROPIC_AUTH_TOKEN=anything  # cctra 不验 Anthropic 客户端的 token；填任意占位即可
+```
+
+`model` field can be any alias (`cctra-pro` / `cctra-flash` / `provider-unique-id`) or full name (`provider/id`). The `[1m]` context suffix is processed client-side by Claude Code — cctra never sees it.
+
+### Codex (and OpenAI SDK / Cursor)
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:3133/v1
+export OPENAI_API_KEY=anything  # 同上，cctra 不验 OpenAI 客户端的 key
+```
+
+Codex defaults to the Chat Completions path (`/v1/chat/completions`). For the Responses path (`/v1/responses`), the client must be configured to send there explicitly — cctra will route whichever path the client picks.
+
+### 任意 OpenAI 兼容客户端（opencode / 其他）
+
+`baseURL` = `http://127.0.0.1:3133/v1`. The client picks the path:
+- requests to `/v1/chat/completions` → Chat path
+- requests to `/v1/responses` → Responses path
+
+If the client allows custom paths, prefer `/v1/responses` — it's closer to cctra's canonical model and carries more forward-compat extras (per 0.6.0 parity work). opencode / Continue.dev / Aider / any custom OpenAI-SDK wrapper fall into this category.
+
+### Model field: 全名 vs alias
+
+- **Alias 短名**（`cctra-pro` / `cctra-flash` / `provider-unique-id`）— 推荐
+  - 客户端写死 `model: cctra-pro`，服务端 `cctra switch cctra-pro <new-target>` 热切上游，client 不需要改
+  - 3 个预置空槽（`cctra-pro` / `cctra-flash` / `cctra-vision`）走 `cctra alias add` 或 `cctra switch` 绑定
+- **全名**（`provider/id`，如 `or/anthropic/claude-3.5`）— 锁定上游时
+  - 不依赖 alias 表，配置文件丢了也能 resolve
+  - 切上游要改 client 的 `model` 字段
+
+### Known inter-protocol incompatibilities
+
+cctra's canonical layer is best-effort, not lossless. When you mix protocols, expect these:
+
+1. **`document` blocks 丢** — Anthropic `document` (PDF/图片) → Chat/Responses upstream 静默丢。仅 Anthropic↔Anthropic round-trip 安全。
+2. **`thinking` / `signature` deltas 丢** — Chat 路径无对应字段。Anthropic↔Responses round-trip 文本保留，signature 丢。
+3. **`redacted_thinking` 降级文本** — 在 Chat/Responses 客户端呈现为 `[redacted_thinking]` literal 字符串（0.5.1 实现）。
+4. **`refusal` 块变文本** — Chat 上游的 refusal → Anthropic 客户端看到 `[refusal] …` 普通 text block，Claude Code refusal 分支不会触发。
+5. **`image` parts 在 Chat/Responses 出站被 re-encode 成 `data:` URL** — 即使入站是 URL 也重编码，payload 涨；远程大图要走 Chat 上游时尤其明显。
+6. **未知 block / item 占位** — Anthropic 未知 block → `[unknown_block:<type>]`；Responses 未知 item → `[unknown_input_item:<type>]`（含 `web_search_call` / `mcp_call` 等 5 个内置 tool）。原 payload 保留在 `extras` 里。
+7. **`stop_reason: "error"` → `"refusal"`** — 0.5.1 修复；Chat 上游 `content_filter` 让 Anthropic 客户端看到 refusal 事件。
+8. **Anthropic `system` 数组（带 `cache_control`）丢 cache_control** — Chat 顶层 system 是 string 无元数据空间，cache_control 元信息无法承载。
 
 ## Plugin system
 
