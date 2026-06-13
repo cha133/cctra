@@ -35,7 +35,7 @@ export function registerTest(program: Command): void {
       // 2. 决定探针用的模型名
       const probeModel =
         opts.model ??
-        (modelsResult.models.length > 0 ? modelsResult.models[0]! : "gpt-3.5-turbo");
+        (modelsResult.models.length > 0 ? modelsResult.models[0]! : "__cctra_probe__");
 
       // 3. 并发探 3 个 API 协议
       const [anthropic, chat, responses] = await Promise.all([
