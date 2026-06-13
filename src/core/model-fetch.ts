@@ -40,7 +40,7 @@ const KNOWN_COMPAT_SUFFIXES = [
   "/claude",
 ];
 
-function stripCompatSuffix(url: string): string | null {
+export function stripCompatSuffix(url: string): string | null {
   const trimmed = url.replace(/\/+$/, "");
   for (const suffix of KNOWN_COMPAT_SUFFIXES) {
     if (trimmed.endsWith(suffix)) {
@@ -151,7 +151,7 @@ function sanitizeOpenRouterModels(models: string[]): string[] {
   });
 }
 
-function joinUrl(base: string, path: string): string {
+export function joinUrl(base: string, path: string): string {
   const b = base.replace(/\/+$/, "");
   const p = path.startsWith("/") ? path : `/${path}`;
   // 避免 /v1/v1 重复

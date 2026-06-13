@@ -12,6 +12,7 @@ import { registerAlias } from "./commands/alias";
 import { registerSwitch } from "./commands/switch";
 import { registerPlugin } from "./commands/plugin";
 import { registerServe } from "./commands/serve";
+import { registerTest } from "./commands/test";
 import pkg from "../package.json";
 
 const program = new Command();
@@ -30,5 +31,6 @@ registerAlias(program);
 registerSwitch(program);
 registerPlugin(program);
 registerServe(program);
+registerTest(program);
 
 program.parse(process.argv);
