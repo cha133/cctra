@@ -5,9 +5,11 @@ import type { CanonicalRequest, CanonicalContentBlock, ImageSource } from "../..
 import { systemToString } from "../common/system-prompt";
 import { mergeExtras } from "../common/extras";
 
+// 每个变体加 `[k: string]: unknown` —— 允许 forward-compat 字段（如 OpenAI image_url.detail / 未来 part 字段）在 wire 出现
+// （mergeExtras 会注入；TS 需要知道这是合法的）
 type ChatContentPart =
-  | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "text"; text: string; [k: string]: unknown }
+  | { type: "image_url"; image_url: { url: string; [k: string]: unknown }; [k: string]: unknown };
 
 interface ChatUpstreamRequest {
   model: string;
@@ -15,7 +17,8 @@ interface ChatUpstreamRequest {
     role: "system" | "user" | "assistant" | "tool";
     content: string | null | ChatContentPart[];
     tool_call_id?: string;
-    tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+    tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string }; [k: string]: unknown }>;
+    [k: string]: unknown;
   }>;
   tools?: Array<{ type: "function"; function: { name: string; description?: string; parameters?: Record<string, unknown> } }>;
   max_tokens?: number;
@@ -25,6 +28,8 @@ interface ChatUpstreamRequest {
   stream: boolean;
   // 兼容 reasoning_effort（OpenAI o-series / 兼容上游可识别）
   reasoning_effort?: "low" | "medium" | "high";
+  // forward-compat: 顶层 extras.openaiChat（metadata / n / seed / response_format / parallel_tool_calls / stream_options 等）一并 spread
+  [k: string]: unknown;
 }
 
 export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequest {
@@ -50,15 +55,17 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
           // 顺带修一个 latent bug：array-form content 之前会被压成 ""，现在扁平化为 text
           const text = typeof b.content === "string" ? b.content : extractText(b.content);
           const content = b.isError ? `[error] ${text}` : text;
-          toolMessages.push({
-            role: "tool",
+          // §5.B：tool_result block.extras 路由到 synthesized tool message（inbound 把 tool msg 级 extras 挂到这个 block）
+          toolMessages.push(mergeExtras({
+            role: "tool" as const,
             content,
             tool_call_id: b.toolUseId,
-          });
+          }, b.extras, "openaiChat"));
         } else if (b.type === "text" && b.text) {
           textAccum += b.text;
         } else if (b.type === "image") {
-          contentParts.push({ type: "image_url", image_url: { url: imageToDataUrl(b.source) } });
+          // image part 级 extras（如 detail: "high"）透传
+          contentParts.push(mergeExtras({ type: "image_url" as const, image_url: { url: imageToDataUrl(b.source) } }, b.extras, "openaiChat"));
         }
         // document / thinking / refusal / tool_use 不应出现在 user 消息里，忽略
       }
@@ -66,27 +73,28 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
       // 拼回累积的 text 和 image：纯文本时合成 string（更紧凑），有 image 时用 content parts 数组
       if (textAccum || contentParts.length > 0) {
         if (contentParts.length === 0) {
-          messages.push({ role: "user", content: textAccum });
+          // 透传 user message 级别 extras（openaiChat 桶）—— 如 name 字段
+          messages.push(mergeExtras({ role: "user" as const, content: textAccum }, m.extras, "openaiChat"));
         } else {
           const parts: ChatContentPart[] = [];
           if (textAccum) parts.push({ type: "text", text: textAccum });
           parts.push(...contentParts);
-          messages.push({ role: "user", content: parts });
+          messages.push(mergeExtras({ role: "user" as const, content: parts }, m.extras, "openaiChat"));
         }
       }
     } else if (m.role === "assistant") {
       const text = extractText(m.content);
-      const toolUses = m.content.filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown } => b.type === "tool_use");
+      const toolUses = m.content.filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown; extras?: import("../../canonical/types").ProtocolExtras } => b.type === "tool_use");
       const msg: ChatUpstreamRequest["messages"][number] = { role: "assistant", content: text || null };
       if (toolUses.length > 0) {
-        msg.tool_calls = toolUses.map((u) => ({
+        msg.tool_calls = toolUses.map((u) => mergeExtras({
           id: u.id,
-          type: "function",
+          type: "function" as const,
           function: {
             name: u.name,
             arguments: typeof u.input === "string" ? u.input : JSON.stringify(u.input ?? {}),
           },
-        }));
+        }, u.extras, "openaiChat"));
       }
       // 透传 assistant message 级别 extras（openaiChat 桶）
       const merged = mergeExtras(msg as unknown as Record<string, unknown>, m.extras, "openaiChat");
@@ -107,6 +115,8 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
     stop: req.stopSequences,
     stream: req.stream,
     reasoning_effort: req.reasoning?.effort,
+    // 顶层 extras spread（metadata / n / seed / response_format / parallel_tool_calls / stream_options 等）
+    ...(req.extras?.openaiChat ?? {}),
   };
 }
 

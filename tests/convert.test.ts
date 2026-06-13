@@ -11,6 +11,7 @@ import { anthropicToCanonical } from "../src/convert/inbound/anthropic-to-canoni
 import { responsesToCanonical } from "../src/convert/inbound/responses-to-canonical";
 import { canonicalToChatUpstream } from "../src/convert/upstream/canonical-to-chat";
 import { canonicalToAnthropicUpstream } from "../src/convert/upstream/canonical-to-anthropic";
+import { canonicalToResponses } from "../src/convert/upstream/canonical-to-responses";
 import { canonicalToChatResponse } from "../src/convert/outbound/canonical-to-chat";
 import { canonicalToAnthropicResponse } from "../src/convert/outbound/canonical-to-anthropic";
 import { canonicalToResponsesResponse } from "../src/convert/outbound/canonical-to-responses";
@@ -150,12 +151,18 @@ describe("Responses → Canonical", () => {
     expect(can.messages[1]?.content[0]).toEqual({ type: "refusal", refusal: "nope" });
   });
 
-  test("未知 type 静默跳，不崩", () => {
+  test("未知 type input item 占位 text + extras 保留原始 payload（forward-compat 兜底）", () => {
+    // 0.6.0 行为升级：原「静默跳」改为保留原始 payload，避免未来 OpenAI 加新 item type 时信息丢失
     const can = responsesToCanonical({
       model: "x",
       input: [{ type: "web_search_call", query: "x" } as never],
     } as Parameters<typeof responsesToCanonical>[0]);
-    expect(can.messages).toHaveLength(0);
+    expect(can.messages).toHaveLength(1);
+    expect(can.messages[0]?.content[0]).toEqual({
+      type: "text",
+      text: "[unknown_input_item:web_search_call]",
+      extras: { openaiResponses: { originalPayload: { type: "web_search_call", query: "x" } } },
+    });
   });
 });
 
@@ -606,5 +613,308 @@ describe("Anthropic stop_reason mapping (error → refusal)", () => {
     const dataLine = event.split("\n").find((l: string) => l.startsWith("data: "))!;
     const parsed = JSON.parse(dataLine.slice("data: ".length)) as { delta: { stop_reason: string } };
     expect(parsed.delta.stop_reason).toBe("refusal");
+  });
+});
+
+// ============================================================================
+// Chat 路径保真：top-level / per-message / per-part extras + 未知 part 兜底
+// 同款修复扩到 OpenAI Chat 路径（P.1）
+// ============================================================================
+
+describe("Chat passthrough fidelity", () => {
+  test("top-level unknown fields land in extras.openaiChat and round-trip", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{ role: "user" as const, content: "hi" }],
+      max_tokens: 100,
+      metadata: { user_id: "u-42" },
+      seed: 12345,
+      response_format: { type: "json_object" },
+      parallel_tool_calls: false,
+      service_tier: "priority",
+      prediction: { type: "content", content: "draft" },
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    expect(can.extras?.openaiChat).toEqual({
+      metadata: { user_id: "u-42" },
+      seed: 12345,
+      response_format: { type: "json_object" },
+      parallel_tool_calls: false,
+      service_tier: "priority",
+      prediction: { type: "content", content: "draft" },
+    });
+
+    const upstream = canonicalToChatUpstream(can);
+    expect(upstream.metadata).toEqual({ user_id: "u-42" });
+    expect(upstream.seed).toBe(12345);
+    expect(upstream.response_format).toEqual({ type: "json_object" });
+    expect(upstream.parallel_tool_calls).toBe(false);
+    expect(upstream.service_tier).toBe("priority");
+    expect(upstream.prediction).toEqual({ type: "content", content: "draft" });
+  });
+
+  test("top-level newer fields (n / stream_options / logprobs) round-trip", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{ role: "user" as const, content: "hi" }],
+      n: 3,
+      stream_options: { include_usage: true },
+      logprobs: true,
+      top_logprobs: 5,
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    const upstream = canonicalToChatUpstream(can);
+    expect(upstream.n).toBe(3);
+    expect(upstream.stream_options).toEqual({ include_usage: true });
+    expect(upstream.logprobs).toBe(true);
+    expect(upstream.top_logprobs).toBe(5);
+  });
+
+  test("assistant message-level extras (name / legacy function_call) round-trip", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{
+        role: "assistant" as const,
+        content: "ok",
+        name: "bot-1",
+        function_call: { name: "legacy_fn", arguments: "{}" },
+      }],
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    expect(can.messages[0]?.extras?.openaiChat).toEqual({
+      name: "bot-1",
+      function_call: { name: "legacy_fn", arguments: "{}" },
+    });
+    const upstream = canonicalToChatUpstream(can);
+    expect(upstream.messages[0]?.name).toBe("bot-1");
+    expect((upstream.messages[0] as { function_call?: unknown }).function_call).toEqual({ name: "legacy_fn", arguments: "{}" });
+  });
+
+  test("user message-level extras (name) round-trip", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{ role: "user" as const, content: "hi", name: "alice" }],
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    expect(can.messages[0]?.extras?.openaiChat).toEqual({ name: "alice" });
+    const upstream = canonicalToChatUpstream(can);
+    expect(upstream.messages[0]?.name).toBe("alice");
+  });
+
+  test("tool message-level extras → tool_result block (§5.B), round-trips back to tool message", () => {
+    // 关键决策：tool msg 级 extras 挂到 tool_result block 而不是 user message
+    // outbound synthesize tool message 时 mergeExtras 还原回 tool message 形态
+    const req = {
+      model: "gpt-4",
+      messages: [
+        {
+          role: "assistant" as const,
+          content: null,
+          tool_calls: [{ id: "c1", type: "function" as const, function: { name: "f", arguments: "{}" } }],
+        },
+        { role: "tool" as const, tool_call_id: "c1", content: "42", name: "tool-1" },
+      ],
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    // tool msg 的 extras 挂在 user.tool_result block 上
+    expect(can.messages[1]?.content[0]?.extras?.openaiChat).toEqual({ name: "tool-1" });
+    const upstream = canonicalToChatUpstream(can);
+    // outbound: tool message 上重新出现 name 字段
+    expect(upstream.messages[1]).toEqual({
+      role: "tool",
+      content: "42",
+      tool_call_id: "c1",
+      name: "tool-1",
+    });
+  });
+
+  test("image_url part-level extras (detail) round-trip", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{
+        role: "user" as const,
+        content: [
+          { type: "image_url" as const, image_url: { url: "http://img" }, detail: "high" } as never,
+        ],
+      }],
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    expect(can.messages[0]?.content[0]?.extras?.openaiChat).toEqual({ detail: "high" });
+    const upstream = canonicalToChatUpstream(can);
+    const parts = upstream.messages[0]?.content as Array<{ type: string; image_url: { url: string }; detail?: string }>;
+    expect(parts[0]).toEqual({
+      type: "image_url",
+      image_url: { url: "http://img" },
+      detail: "high",
+    });
+  });
+
+  test("unknown content part type preserved as text + extras (forward-compat, no silent drop)", () => {
+    const req = {
+      model: "gpt-4",
+      messages: [{
+        role: "user" as const,
+        content: [
+          { type: "input_audio", input_audio: { data: "base64-blob", format: "wav" } } as never,
+        ],
+      }],
+    };
+    const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
+    expect(can.messages[0]?.content[0]).toEqual({
+      type: "text",
+      text: "[unknown_part:input_audio]",
+      extras: { openaiChat: { input_audio: { data: "base64-blob", format: "wav" } } },
+    });
+  });
+});
+
+// ============================================================================
+// Responses 路径保真：top-level / per-item extras + 未知 item 兜底 + M.4 index signatures
+// 同款修复扩到 OpenAI Responses 路径（P.2 + M.4）
+// ============================================================================
+
+describe("Responses passthrough fidelity", () => {
+  test("top-level unknown fields land in extras.openaiResponses and round-trip", () => {
+    const req = {
+      model: "gpt-5",
+      input: [{ type: "message" as const, role: "user" as const, content: "hi" }],
+      background: true,
+      include: ["reasoning.encrypted_content"],
+      metadata: { user_id: "u-42" },
+      parallel_tool_calls: false,
+      service_tier: "priority",
+      store: false,
+      text: { format: { type: "json_object" } },
+      tool_choice: "required",
+      truncation: "auto",
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.extras?.openaiResponses).toEqual({
+      background: true,
+      include: ["reasoning.encrypted_content"],
+      metadata: { user_id: "u-42" },
+      parallel_tool_calls: false,
+      service_tier: "priority",
+      store: false,
+      text: { format: { type: "json_object" } },
+      tool_choice: "required",
+      truncation: "auto",
+    });
+
+    const upstream = canonicalToResponses(can);
+    expect(upstream.background).toBe(true);
+    expect(upstream.include).toEqual(["reasoning.encrypted_content"]);
+    expect(upstream.metadata).toEqual({ user_id: "u-42" });
+    expect(upstream.store).toBe(false);
+    expect(upstream.tool_choice).toBe("required");
+  });
+
+  test("top-level newer fields (safety_identifier / prompt_cache_key / prompt) round-trip", () => {
+    const req = {
+      model: "gpt-5",
+      input: [{ type: "message" as const, role: "user" as const, content: "hi" }],
+      safety_identifier: "sid-1",
+      prompt_cache_key: "cache-key-1",
+      prompt: { id: "prompt-template-1", variables: {} },
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+    const upstream = canonicalToResponses(can);
+    expect(upstream.safety_identifier).toBe("sid-1");
+    expect(upstream.prompt_cache_key).toBe("cache-key-1");
+    expect(upstream.prompt).toEqual({ id: "prompt-template-1", variables: {} });
+  });
+
+  test("message input item level extras round-trip", () => {
+    const req = {
+      model: "gpt-5",
+      input: [{
+        type: "message" as const,
+        role: "user" as const,
+        content: "hi",
+        id: "msg-1",
+        status: "completed",
+      } as never],
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+    expect(can.messages[0]?.extras?.openaiResponses).toEqual({ id: "msg-1", status: "completed" });
+    const upstream = canonicalToResponses(can);
+    const item = upstream.input[0] as { id?: string; status?: string };
+    expect(item.id).toBe("msg-1");
+    expect(item.status).toBe("completed");
+  });
+
+  test("function_call input item level extras (status) round-trip", () => {
+    const req = {
+      model: "gpt-5",
+      input: [{
+        type: "function_call" as const,
+        call_id: "c1",
+        name: "f",
+        arguments: "{}",
+        status: "completed",
+      } as never],
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+    // function_call 的 extras 挂在 tool_use block 上
+    expect(can.messages[0]?.content[0]?.extras?.openaiResponses).toEqual({ status: "completed" });
+    const upstream = canonicalToResponses(can);
+    const item = upstream.input[0] as { type: string; status?: string };
+    expect(item.type).toBe("function_call");
+    expect(item.status).toBe("completed");
+  });
+
+  test("function_call_output input item level extras round-trip", () => {
+    const req = {
+      model: "gpt-5",
+      input: [{
+        type: "function_call_output" as const,
+        call_id: "c1",
+        output: "42",
+        status: "completed",
+      } as never],
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+    // function_call_output 的 extras 挂在 tool_result block 上
+    expect(can.messages[0]?.content[0]?.extras?.openaiResponses).toEqual({ status: "completed" });
+    const upstream = canonicalToResponses(can);
+    const item = upstream.input[0] as { type: string; status?: string };
+    expect(item.type).toBe("function_call_output");
+    expect(item.status).toBe("completed");
+  });
+
+  test("canonicalToResponses top-level unknown fields spread (upstream baseline)", () => {
+    // Responses 路径之前完全无 upstream 测试，这里同步补 baseline
+    const can = {
+      model: "gpt-5",
+      messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }] }],
+      stream: false,
+      extras: { openaiResponses: { background: true, store: false } },
+    };
+    const upstream = canonicalToResponses(can);
+    expect(upstream.background).toBe(true);
+    expect(upstream.store).toBe(false);
+    expect(upstream.input).toHaveLength(1);
+  });
+
+  test("bucket isolation: tool_use block extras.anthropic does NOT leak into Responses upstream", () => {
+    // 验证 extras 按协议桶隔离：anthropic 桶里的字段不会泄露到 openaiResponses upstream
+    const can = {
+      model: "gpt-5",
+      messages: [{
+        role: "assistant" as const,
+        content: [{
+          type: "tool_use" as const,
+          id: "c1",
+          name: "f",
+          input: {},
+          extras: { anthropic: { cache_control: { type: "ephemeral" } } },
+        }],
+      }],
+      stream: false,
+    };
+    const upstream = canonicalToResponses(can);
+    const item = upstream.input[0] as { type: string; cache_control?: unknown };
+    expect(item.type).toBe("function_call");
+    expect(item.cache_control).toBeUndefined();
   });
 });
