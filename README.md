@@ -183,6 +183,8 @@ Plugin configs go in `~/.cctra/plugins/<name>/config.json`.
 - `src/core/resolve.ts` — `provider/model` and global `[aliases]` table resolution
 - `src/core/alias.ts` — auto-alias decision (id globally unique → silent `aliases[id] = "provider/id"`)
 
+For design rationale, request lifecycle, and subsystem deep-dives, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Credits
 
 The vendor preset list (`src/providers/presets.ts`) — provider names and endpoint URLs — is derived from [cc-switch](https://github.com/farion1231/cc-switch) (MIT, Copyright (c) 2025 Jason Young). Thanks to Jason and the cc-switch contributors for maintaining this comprehensive registry.
