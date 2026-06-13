@@ -76,6 +76,16 @@ export interface Config {
   plugins: Record<string, PluginConfig>;
   /** alias 名 → "provider/model" 全名或 "" (unbound) */
   aliases: Record<string, string>;
+  /**
+   * Vendor 整流（rectify）配置 — 上游 quirk 兼容层
+   * - rules: 全局规则开关（rule id → enabled）。空 / 缺失 = 全部禁用
+   * - providers: per-provider 显式 attach 列表。provider 未出现 = 不跑任何规则（白名单语义）
+   * - plugin source 不在此处 attach，由 plugin 自带 JS 处理 quirks
+   */
+  rectify?: {
+    rules?: Record<string, boolean>;
+    providers?: Record<string, string[]>;
+  };
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -83,4 +93,5 @@ export const DEFAULT_CONFIG: Config = {
   providers: {},
   plugins: {},
   aliases: buildDefaultAliases(),
+  rectify: { rules: {}, providers: {} },
 };

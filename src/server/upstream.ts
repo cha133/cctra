@@ -16,6 +16,7 @@ import { ResponsesStreamFormatter } from "../convert/streaming/outbound/format-r
 import { AnthropicStreamFormatter } from "../convert/streaming/outbound/format-anthropic";
 import { cancelableFetch } from "./cancelable-fetch";
 import { logger } from "../utils/logger";
+import { runRectifiers } from "../convert/upstream/rectify";
 import type { CanonicalResponseError } from "../canonical/types";
 
 /**
@@ -48,7 +49,11 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
     return makeError(opts.route.upstreamModelId, "plugin_returned_no_config", { type: "plugin_error" });
   }
 
-  const upstreamBody = pickUpstreamSerializer(ready.apiFormat)(opts.canonical);
+  const upstreamBody = runRectifiers(
+    pickUpstreamSerializer(ready.apiFormat)(opts.canonical),
+    ready.source,
+    ready.apiFormat,
+  );
 
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
@@ -106,7 +111,11 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
   const ready = await resolveUpstream(opts.route);
   if (!ready) throw new Error("plugin_returned_no_config");
 
-  const upstreamBody = pickUpstreamSerializer(ready.apiFormat)(opts.canonical);
+  const upstreamBody = runRectifiers(
+    pickUpstreamSerializer(ready.apiFormat)(opts.canonical),
+    ready.source,
+    ready.apiFormat,
+  );
 
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream:stream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
@@ -148,6 +157,7 @@ interface ReadyConfig {
   path: string;
   apiFormat: ApiFormat;
   authHeader: Record<string, string>;
+  source: Source;
 }
 
 async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<ReadyConfig | null> {
@@ -160,6 +170,7 @@ async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<Rea
       path,
       apiFormat: provider.apiFormat,
       authHeader: { Authorization: `Bearer ${provider.token}`, ...provider.headers },
+      source,
     };
   }
   // plugin
@@ -181,6 +192,7 @@ async function resolveUpstream(route: UpstreamCallOptions["route"]): Promise<Rea
       path: ready.path,
       apiFormat: ready.apiFormat,
       authHeader: ready.authHeader,
+      source,
     };
   } catch (e) {
     logger.error(`[plugin:${source.name}] getConfig failed: ${(e as Error).message}`);

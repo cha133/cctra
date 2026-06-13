@@ -148,6 +148,41 @@ export default {
 
 See `examples/plugins/` for working examples.
 
+## Rectifiers (vendor-quirk workarounds)
+
+Some upstream providers have idiosyncratic request-shape requirements that aren't part of any standard protocol. Classic example: **Kimi's Anthropic-compatible endpoint** (`api.moonshot.cn/anthropic`) only accepts `thinking: { type: "enabled", budget_tokens: N }` — it 400s on the effort shorthand (`"high"`/`"medium"`/`"low"`) that Claude Code sends, and on boolean `true`/`false`. Without rectification, the request goes through cctra unchanged and Kimi rejects it.
+
+cctra's rectify subsystem lets you attach **named, composable rules** to specific providers. A rule rewrites the upstream wire body right before the HTTP fetch. Currently bundled:
+
+| Rule id | Effect |
+|---|---|
+| `normalize-thinking-type` | Coerce Anthropic `thinking.type` to `"enabled"`/`"disabled"` string. Any non-literal-`"disabled"` value (including `"high"`/`"medium"`/`"low"`/`"xhigh"`/`"max"`/boolean `true`) → `"enabled"`. Only fires for `anthropic-messages` upstream. |
+
+Two-level control: **global on/off** per rule + **per-provider attach** (whitelist). Provider not in `[rectify.providers.X]` → no rules run, regardless of global toggle. Rules throw → `logger.warn` + skip; request continues.
+
+```bash
+cctra rectify                                     # list rules + attachments + per-rule status
+cctra rectify enable normalize-thinking-type      # global toggle
+cctra rectify disable normalize-thinking-type
+cctra rectify attach kimi normalize-thinking-type # whitelist a provider
+cctra rectify detach kimi normalize-thinking-type
+```
+
+TOML equivalent (manual edit `~/.cctra/config.toml`):
+
+```toml
+[rectify.rules]
+"normalize-thinking-type" = true
+
+[rectify.providers]
+"kimi" = ["normalize-thinking-type"]
+```
+
+**Scope notes (v1)**:
+- Only TS-built-in rules ship — adding a new rule is a code change (drop a file in `src/convert/upstream/rectify/rules/` and add it to the registry).
+- Plugin upstreams do NOT participate in rectify. Plugins are arbitrary JS and handle their own quirks via `getConfig`. If you need plugin-level transforms later, that's a `transformRequest` hook on the plugin API.
+- One built-in rule today. The architecture is "onion-style" internally so new rules compose left-to-right without touching the dispatcher.
+
 ## CLI
 
 ```

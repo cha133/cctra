@@ -37,6 +37,7 @@ export function loadConfigFile(): Config {
       data.aliases && typeof data.aliases === "object" && !Array.isArray(data.aliases)
         ? (data.aliases as Record<string, string>)
         : buildDefaultAliases(),
+    rectify: data.rectify ?? { rules: {}, providers: {} },
   };
 
   // 兜底：补 kind 字段（手动写的 config 可能漏了）

@@ -11,6 +11,7 @@ import { registerEdit } from "./commands/edit";
 import { registerAlias } from "./commands/alias";
 import { registerSwitch } from "./commands/switch";
 import { registerPlugin } from "./commands/plugin";
+import { registerRectify } from "./commands/rectify";
 import { registerServe } from "./commands/serve";
 import { registerTest } from "./commands/test";
 import pkg from "../package.json";
@@ -30,6 +31,7 @@ registerEdit(program);
 registerAlias(program);
 registerSwitch(program);
 registerPlugin(program);
+registerRectify(program);
 registerServe(program);
 registerTest(program);
 
