@@ -12,7 +12,7 @@
 // cctra preset 设计：
 //   - 一个 vendor 可以有多个协议端点（如 Ark 同时支持 Anthropic + OpenAI Chat）
 //   - add wizard 选中 preset 后，下一步协议选择只显示该 preset 支持的协议
-//   - 「不使用供应商」才允许 3 种协议全选
+//   - 「手动配置」才允许 3 种协议全选
 // ============================================================================
 
 import type { ApiFormat } from "../canonical/types";
@@ -107,16 +107,16 @@ export const providerPresets: ProviderPreset[] = [
 ];
 
 /**
- * 「不使用供应商」special entry（用于纯手输流程）
+ * 「手动配置」special entry（用于纯手输流程）
  */
 export const NO_VENDOR: ProviderPreset = {
-  name: "(不使用供应商)",
+  name: "手动配置",
   endpoints: {},
   notes: "",
 };
 
 /**
- * 获取供应商列表，第一项是「不使用供应商」
+ * 获取供应商列表，第一项是「手动配置」
  */
 export function getVendorChoices(): ProviderPreset[] {
   return [NO_VENDOR, ...providerPresets];

@@ -46,7 +46,7 @@ async function promptNewProvider(): Promise<Provider> {
   // 1. Vendor（可跳过 → 走纯手输）
   const vendor = checkCancel(
     await p.autocomplete<ProviderPreset>({
-      message: "Select a vendor (type to search, or pick '(不使用供应商)' for custom):",
+      message: "Select a vendor (type to search, or pick '手动配置' for custom):",
       options: getVendorChoices().map((v) => ({
         value: v,
         label: v.name,

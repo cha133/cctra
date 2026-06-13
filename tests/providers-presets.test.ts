@@ -48,10 +48,10 @@ describe("generateProfileName", () => {
 });
 
 describe("getVendorChoices", () => {
-  test("first entry is '(不使用供应商)'", () => {
+  test("first entry is '手动配置'", () => {
     const choices = getVendorChoices();
     expect(choices[0]).toBe(NO_VENDOR);
-    expect(choices[0]?.name).toBe("(不使用供应商)");
+    expect(choices[0]?.name).toBe("手动配置");
   });
 
   test("includes all providerPresets", () => {
