@@ -6,13 +6,13 @@
 
 ## 1. Overview
 
-cctra is a local HTTP protocol-converter + plugin host for LLM providers. It runs a single Bun process on `127.0.0.1:3133` that exposes three vendor-faithful endpoints — `POST /anthropic/v1/messages`, `POST /v1/chat/completions`, `POST /v1/responses` — translates between them and the upstream protocol(s) the user's subscriptions / plugins speak, and serves a unified `GET /v1/models` + `GET /healthz`.
+cctra is a local HTTP protocol-converter + plugin host for LLM providers. It runs a single Bun process on `127.0.0.1:3133` that exposes three endpoints — `POST /v1/messages`, `POST /v1/chat/completions`, `POST /v1/responses` — translates between them and the upstream protocol(s) the user's subscriptions / plugins speak, and serves a unified `GET /v1/models` + `GET /healthz`.
 
 The defining design choice: a **protocol-agnostic internal type system** (`Canonical`) sits between inbound and outbound conversion, so adding a fourth client protocol or a third upstream protocol costs **O(N) conversion functions**, not O(N²) pairwise mappings. Anthropic was chosen as the shape-of-record for the canonical model because it's the most expressive of the three (rich content blocks, separated system, explicit `tool_use` / `tool_result` pairing).
 
 Three forces shaped the rest of the design:
 
-- **Clients speak what they speak.** A user moving from `https://api.anthropic.com` to cctra should change only the host portion of `baseURL`, not memorize private paths. This is why endpoints keep their vendor prefixes (`/anthropic/v1/messages`, `/v1/...`) instead of being normalized to cctra-private names.
+- **Clients speak what they speak.** A user moving from `https://api.anthropic.com` to cctra should change only the host portion of `baseURL`. All three endpoints live under the root (`/v1/messages`, `/v1/chat/completions`, `/v1/responses`) so the Anthropic SDK works with `baseURL=http://127.0.0.1:3133` (it appends `/v1/messages` internally) and OpenAI SDKs with `baseURL=http://127.0.0.1:3133/v1`.
 - **Users own their config.** Everything in `~/.cctra/config.toml` is explicit. cctra never auto-detects capabilities, never fails over silently, never holds business credentials (search keys, OAuth tokens, etc.) — those go through plugins.
 - **The server is the same binary, foreground or background.** There is no separate daemon process, no Rust launcher, no system-tray integration in v1. You run `cctra serve`; aliases hot-reload without a restart.
 
@@ -154,9 +154,9 @@ The streaming and non-streaming converters are kept **physically separate** (not
 
 ### Worked walkthrough: Claude Code → cctra → Anthropic
 
-A user with `ANTHROPIC_BASE_URL=http://127.0.0.1:3133/anthropic` and `ANTHROPIC_MODEL=cctra-pro` issues a request. Tracing the path:
+A user with `ANTHROPIC_BASE_URL=http://127.0.0.1:3133` and `ANTHROPIC_MODEL=cctra-pro` issues a request. Tracing the path:
 
-1. **HTTP arrives at `src/server/serve.ts`** — path matches `POST /anthropic/v1/messages`, dispatches to `handlers/messages.ts`.
+1. **HTTP arrives at `src/server/serve.ts`** — path matches `POST /v1/messages`, dispatches to `handlers/messages.ts`.
 2. **Model resolution (`src/core/resolve.ts`)** — `resolveModelRef("cctra-pro", config)` looks up `config.aliases["cctra-pro"]`, finds `value: "anthropic-main/claude-test"`, splits on `/`, gets `source = providers.anthropic-main` and `modelId = "claude-test"`. If the alias value is `""` (unbound) or the target source doesn't exist, `resolveAlias` throws `ResolveError` with a hint pointing at `cctra switch`.
 3. **Inbound conversion (`src/convert/inbound/anthropic-to-canonical.ts`)** — the wire body is parsed into `CanonicalRequest`. Top-level `metadata` and any unknown fields land in `extras.anthropic`. Per-block `cache_control` is attached to the corresponding `CanonicalContentBlock.extras.anthropic`. If the body contains a `redacted_thinking` block, it becomes a canonical `thinking` block with `signature` set and a `[redacted]` text placeholder — this is the 0.5.1 behavior upgrade; earlier versions dropped it.
 4. **Upstream conversion (`src/convert/upstream/canonical-to-anthropic.ts`)** — re-emits Anthropic wire. This is mostly structural since the client is also Anthropic-shaped; the only nontrivial step is re-attaching the `extras.anthropic` bucket via `mergeExtras`.
@@ -199,7 +199,7 @@ The HTTP layer is intentionally thin. `serve.ts` is a `Bun.serve()` entry that o
 
 | Method + path | Handler |
 |---|---|
-| `POST /anthropic/v1/messages` | `handlers/messages.ts` |
+| `POST /v1/messages` | `handlers/messages.ts` |
 | `POST /v1/chat/completions` | `handlers/chat-completions.ts` |
 | `POST /v1/responses` | `handlers/responses.ts` |
 | `GET /v1/models` | `handlers/models.ts` (aggregates aliases + provider models, exposes `owned_by: "cctra-alias"` for unbound slots) |

@@ -24,7 +24,7 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 
 | Protocol | Path |
 |---|---|
-| Anthropic Messages | `POST /anthropic/v1/messages` |
+| Anthropic Messages | `POST /v1/messages` |
 | OpenAI Chat Completions | `POST /v1/chat/completions` |
 | OpenAI Responses | `POST /v1/responses` |
 | OpenAI Models | `GET /v1/models` |
@@ -70,12 +70,12 @@ cctra ls
 
 Each client picks its `baseURL` + `model` field to hit the right protocol endpoint. Two clients that speak the same protocol (e.g. Claude Code and any other Anthropic-SDK-based client) use the same `baseURL` — only the `model` field varies.
 
-> ⚠️ **baseURL must include the protocol namespace prefix.** Pointing a Chat-Completions client at `/anthropic` (or vice-versa) will hit the wrong route and fail.
+> ⚠️ **baseURL must include the right prefix for the SDK.** Anthropic SDK appends `/v1/messages` internally (set `baseURL=http://127.0.0.1:3133`). OpenAI SDK appends `/chat/completions` and `/responses` (set `baseURL=http://127.0.0.1:3133/v1`).
 
 ### Claude Code
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:3133/anthropic
+export ANTHROPIC_BASE_URL=http://127.0.0.1:3133
 export ANTHROPIC_AUTH_TOKEN=anything  # cctra 不验 Anthropic 客户端的 token；填任意占位即可
 ```
 

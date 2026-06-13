@@ -21,10 +21,10 @@ bun run src/index.ts serve         # foreground HTTP server
 ## Conventions
 
 - cctra exposes exactly 3 endpoints:
-  - `POST /anthropic/v1/messages` (Anthropic)
+  - `POST /v1/messages` (Anthropic)
   - `POST /v1/chat/completions` (OpenAI Chat)
   - `POST /v1/responses` (OpenAI Responses)
-- Client baseURL convention: `http://127.0.0.1:3133/anthropic` or `http://127.0.0.1:3133/v1`
+- Client baseURL convention: `http://127.0.0.1:3133` for Anthropic, `http://127.0.0.1:3133/v1` for OpenAI
 - Model field on requests is either `provider/model` or a model alias (auto-generated when the id is unique across all sources)
 - CLI commands: `add` / `edit` / `rm` / `rename` / `alias` / `show` / `ls` / `plugin` / `serve`
 - Persisted config: `~/.cctra/config.toml` via confbox

@@ -43,8 +43,8 @@ export function startServer(portOverride?: number): { port: number; stop: () => 
         return handleResponses(req);
       }
 
-      // Anthropic Messages（带 /v1 后缀的官方 path）
-      if (url.pathname === "/anthropic/v1/messages" && req.method === "POST") {
+      // Anthropic Messages
+      if (url.pathname === "/v1/messages" && req.method === "POST") {
         return handleMessages(req);
       }
 

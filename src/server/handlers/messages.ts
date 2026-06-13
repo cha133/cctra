@@ -1,5 +1,5 @@
 // ============================================================================
-// POST /anthropic/v1/messages 处理器
+// POST /v1/messages 处理器
 // ============================================================================
 import { anthropicToCanonical } from "../../convert/inbound/anthropic-to-canonical";
 import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";

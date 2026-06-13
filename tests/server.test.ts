@@ -260,7 +260,7 @@ describe("HTTP server", () => {
   });
 
   test("messages endpoint accepts POST", async () => {
-    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "nonexistent", messages: [] }),
@@ -503,7 +503,7 @@ describe("SSE keepalive", () => {
 
 describe("Cross-format upstream: openai-responses", () => {
   test("Anthropic client → cctra → Responses upstream (non-stream)", async () => {
-    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -560,14 +560,14 @@ describe("Cross-format upstream: openai-responses", () => {
 // ============================================================================
 // Cross-format 集成测试（0.6.1）：补 9/9 协议组合里缺的 4 个
 // - Anthropic client × Chat upstream        (复用 /chat/echo-body)
-// - Chat client × Anthropic upstream        (新 /anthropic/messages/echo)
-// - Responses client × Anthropic upstream   (新 /anthropic/messages/echo)
+// - Chat client × Anthropic upstream
+// - Responses client × Anthropic upstream
 // - Responses client × Chat upstream        (复用 /chat/echo-body)
 // ============================================================================
 
 describe("Cross-format upstream: openai-chat", () => {
   test("Anthropic client → cctra → Chat upstream (non-stream)", async () => {
-    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -668,7 +668,7 @@ describe("Error status propagation", () => {
   });
 
   test("upstream 429 returns 429 to Anthropic Messages client", async () => {
-    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/anthropic/v1/messages`, {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

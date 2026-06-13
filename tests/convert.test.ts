@@ -3,7 +3,7 @@
 // 覆盖：
 //   1. 协议转换 (Chat ↔ Canonical, Anthropic ↔ Canonical, Responses ↔ Canonical)
 //   2. 模型解析 (sub/model / global alias)
-//   3. HTTP 端点 (/healthz, /v1/models, /v1/chat/completions, /anthropic/v1/messages)
+//   3. HTTP 端点 (/healthz, /v1/models, /v1/chat/completions, /v1/messages, /v1/responses)
 // ============================================================================
 import { describe, test, expect } from "bun:test";
 import { chatToCanonical } from "../src/convert/inbound/chat-to-canonical";
