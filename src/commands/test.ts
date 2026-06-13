@@ -3,7 +3,7 @@
 // ============================================================================
 import { Command } from "commander";
 import { joinUrl, stripCompatSuffix } from "../core/model-fetch";
-import { bold, dim, green, red } from "../ui/format";
+import { bold, dim, green, red, yellow } from "../ui/format";
 import { padEndStr, printSection } from "../ui/table";
 
 const TIMEOUT_MS = 5000;
@@ -11,6 +11,7 @@ const TIMEOUT_MS = 5000;
 interface ProbeResult {
   api: string;
   ok: boolean;
+  httpStatus: number; // 0 = network error
   detail?: string;
 }
 
@@ -52,6 +53,7 @@ export function registerTest(program: Command): void {
         {
           api: `Models${modelsResult.ok ? ` (${modelsResult.models.length} models)` : ""}`,
           ok: modelsResult.ok,
+          httpStatus: modelsResult.httpStatus,
           detail: modelsResult.detail,
         },
       ];
@@ -77,12 +79,10 @@ export function registerTest(program: Command): void {
 // ---------------------------------------------------------------------------
 
 async function probeModels(base: string, headers: Record<string, string>): Promise<ModelsProbeResult> {
-  // 先试主 URL
   const url = joinUrl(base, "/v1/models");
   let result = await tryProbeModels(url, headers);
   if (result.models.length > 0) return result;
 
-  // 剥离已知兼容后缀重试
   const stripped = stripCompatSuffix(base);
   if (stripped) {
     const fallbackUrl = joinUrl(stripped, "/v1/models");
@@ -101,12 +101,12 @@ async function tryProbeModels(url: string, headers: Record<string, string>): Pro
     const body = await res.json().catch(() => null);
     if (body && Array.isArray((body as Record<string, unknown>).data)) {
       const models = ((body as Record<string, unknown>).data as Array<{ id: string }>).map((m) => m.id);
-      return { api: "Models", ok: true, models };
+      return { api: "Models", ok: true, httpStatus: res.status, models };
     }
-    const reason = body ? `unexpected response shape (HTTP ${res.status})` : `non-JSON response (HTTP ${res.status})`;
-    return { api: "Models", ok: false, detail: reason, models: [] };
+    const reason = body ? `unexpected response shape` : `non-JSON response`;
+    return { api: "Models", ok: false, httpStatus: res.status, detail: reason, models: [] };
   } catch {
-    return { api: "Models", ok: false, detail: "connection failed or timeout", models: [] };
+    return { api: "Models", ok: false, httpStatus: 0, detail: "connection failed or timeout", models: [] };
   }
 }
 
@@ -130,17 +130,15 @@ async function probeAnthropic(
     });
     const raw = await res.json().catch(() => null);
     if (!raw || typeof raw !== "object") {
-      return { ok: false, detail: "non-JSON response" };
+      return { ok: false, httpStatus: res.status, detail: "non-JSON response" };
     }
     const json = raw as Record<string, unknown>;
-    // Anthropic 特征：成功响应有 type === "message"，错误响应有 type === "error"
     if (json.type === "message" || json.type === "error") {
-      return { ok: true };
+      return { ok: true, httpStatus: res.status };
     }
-    // 有些 provider 在 /v1/messages 返回 OpenAI 风格错误 → 不认
-    return { ok: false, detail: `response doesn't match Anthropic protocol (HTTP ${res.status})` };
+    return { ok: false, httpStatus: res.status, detail: "response doesn't match Anthropic protocol" };
   } catch {
-    return { ok: false, detail: "connection failed or timeout" };
+    return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
   }
 }
 
@@ -164,19 +162,18 @@ async function probeChat(
     });
     const raw = await res.json().catch(() => null);
     if (!raw || typeof raw !== "object") {
-      return { ok: false, detail: "non-JSON response" };
+      return { ok: false, httpStatus: res.status, detail: "non-JSON response" };
     }
     const json = raw as Record<string, unknown>;
-    // Chat 特征：成功有 choices 数组，错误有顶层 error.message
     if (Array.isArray(json.choices)) {
-      return { ok: true };
+      return { ok: true, httpStatus: res.status };
     }
     if (json.error && typeof json.error === "object" && typeof (json.error as Record<string, unknown>).message === "string") {
-      return { ok: true };
+      return { ok: true, httpStatus: res.status };
     }
-    return { ok: false, detail: `response doesn't match Chat protocol (HTTP ${res.status})` };
+    return { ok: false, httpStatus: res.status, detail: "response doesn't match Chat protocol" };
   } catch {
-    return { ok: false, detail: "connection failed or timeout" };
+    return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
   }
 }
 
@@ -200,22 +197,21 @@ async function probeResponses(
     });
     const raw = await res.json().catch(() => null);
     if (!raw || typeof raw !== "object") {
-      return { ok: false, detail: "non-JSON response" };
+      return { ok: false, httpStatus: res.status, detail: "non-JSON response" };
     }
     const json = raw as Record<string, unknown>;
-    // Responses 特征：成功有 output 数组，错误有顶层 error.code 或 error.message
     if (Array.isArray(json.output)) {
-      return { ok: true };
+      return { ok: true, httpStatus: res.status };
     }
     if (json.error && typeof json.error === "object") {
       const e = json.error as Record<string, unknown>;
       if (typeof e.message === "string" || typeof e.code === "string") {
-        return { ok: true };
+        return { ok: true, httpStatus: res.status };
       }
     }
-    return { ok: false, detail: `response doesn't match Responses protocol (HTTP ${res.status})` };
+    return { ok: false, httpStatus: res.status, detail: "response doesn't match Responses protocol" };
   } catch {
-    return { ok: false, detail: "connection failed or timeout" };
+    return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
   }
 }
 
@@ -226,10 +222,23 @@ async function probeResponses(
 function printResults(results: ProbeResult[]): void {
   const labelW = Math.max(...results.map((r) => r.api.length));
   for (const r of results) {
-    const status = r.ok ? green("✔") : red("✖");
-    const detail = r.detail ? dim(`  (${r.detail})`) : "";
-    console.log(`  ${padEndStr(r.api, labelW)}  ${status}${detail}`);
+    const icon = r.ok ? green("✔") : red("✖");
+    const tail = formatStatusTail(r);
+    console.log(`  ${padEndStr(r.api, labelW)}  ${icon}${tail}`);
   }
+}
+
+/** status / detail 后缀：HTTP 状态码 + detail（如果有） */
+function formatStatusTail(r: ProbeResult): string {
+  const parts: string[] = [];
+  // 异常 HTTP 状态（非 2xx，非 0=连接失败）
+  if (r.httpStatus > 0 && (r.httpStatus < 200 || r.httpStatus >= 300)) {
+    parts.push(yellow(`HTTP ${r.httpStatus}`));
+  }
+  if (r.detail) {
+    parts.push(dim(r.detail));
+  }
+  return parts.length > 0 ? `  (${parts.join(", ")})` : "";
 }
 
 function modelCountLabel(count: number): string {
@@ -245,7 +254,6 @@ function normalizeURL(url: string): string {
 }
 
 function buildHeaders(key: string): Record<string, string> {
-  // 自动补 Bearer 前缀
   const token = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
   return { Authorization: token };
 }
