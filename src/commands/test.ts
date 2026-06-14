@@ -160,7 +160,7 @@ async function tryProbeAnthropicOne(
     if (json.type === "message" || json.type === "error") {
       return { ok: true, httpStatus: res.status };
     }
-    return { ok: false, httpStatus: res.status, detail: "response doesn't match Anthropic protocol" };
+    return { ok: false, httpStatus: res.status, detail: "wrong shape" };
   } catch {
     return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
   }
@@ -195,7 +195,7 @@ async function probeChat(
     if (json.error && typeof json.error === "object" && typeof (json.error as Record<string, unknown>).message === "string") {
       return { ok: true, httpStatus: res.status, probePath: url };
     }
-    return { ok: false, httpStatus: res.status, detail: "response doesn't match Chat protocol", probePath: url };
+    return { ok: false, httpStatus: res.status, detail: "wrong shape", probePath: url };
   } catch {
     return { ok: false, httpStatus: 0, detail: "connection failed or timeout", probePath: url };
   }
@@ -233,7 +233,7 @@ async function probeResponses(
         return { ok: true, httpStatus: res.status, probePath: url };
       }
     }
-    return { ok: false, httpStatus: res.status, detail: "response doesn't match Responses protocol", probePath: url };
+    return { ok: false, httpStatus: res.status, detail: "wrong shape", probePath: url };
   } catch {
     return { ok: false, httpStatus: 0, detail: "connection failed or timeout", probePath: url };
   }
