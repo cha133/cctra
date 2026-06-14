@@ -2,7 +2,7 @@
 node_modules/
 
 # handover doc (out-of-git, for personal use)
-TODO.md
+BOARD.md
 local-doc/
 
 # npm pack output
