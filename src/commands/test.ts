@@ -259,7 +259,7 @@ function formatStatusTail(r: ProbeResult): string {
     parts.push(dim(r.detail));
   }
   if (r.hitPath) {
-    parts.push(dim(r.hitPath));
+    parts.push(dim(toPathOnly(r.hitPath)));
   }
   return parts.length > 0 ? `  (${parts.join(", ")})` : "";
 }
@@ -279,4 +279,13 @@ function normalizeURL(url: string): string {
 function buildHeaders(key: string): Record<string, string> {
   const token = key.startsWith("Bearer ") ? key : `Bearer ${key}`;
   return { Authorization: token };
+}
+
+/** 从完整 URL 里只取 pathname（剥 scheme + host）。非完整 URL 时原样返回 */
+function toPathOnly(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
 }
