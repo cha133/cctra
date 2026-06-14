@@ -158,7 +158,11 @@ async function tryProbeAnthropicOne(
     }
     const json = raw as Record<string, unknown>;
     if (json.type === "message" || json.type === "error") {
-      return { ok: true, httpStatus: res.status };
+      return {
+        ok: true,
+        httpStatus: res.status,
+        detail: json.type === "error" ? extractErrorTag(json) : undefined,
+      };
     }
     return { ok: false, httpStatus: res.status, detail: "wrong shape" };
   } catch {
@@ -193,7 +197,7 @@ async function probeChat(
       return { ok: true, httpStatus: res.status, probePath: url };
     }
     if (json.error && typeof json.error === "object" && typeof (json.error as Record<string, unknown>).message === "string") {
-      return { ok: true, httpStatus: res.status, probePath: url };
+      return { ok: true, httpStatus: res.status, probePath: url, detail: extractErrorTag(json) };
     }
     return { ok: false, httpStatus: res.status, detail: "wrong shape", probePath: url };
   } catch {
@@ -230,7 +234,7 @@ async function probeResponses(
     if (json.error && typeof json.error === "object") {
       const e = json.error as Record<string, unknown>;
       if (typeof e.message === "string" || typeof e.code === "string") {
-        return { ok: true, httpStatus: res.status, probePath: url };
+        return { ok: true, httpStatus: res.status, probePath: url, detail: extractErrorTag(json) };
       }
     }
     return { ok: false, httpStatus: res.status, detail: "wrong shape", probePath: url };
@@ -246,10 +250,17 @@ async function probeResponses(
 function printResults(results: ProbeResult[]): void {
   const labelW = Math.max(...results.map((r) => r.api.length));
   for (const r of results) {
-    const icon = r.ok ? green("✔") : red("✖");
+    const icon = pickIcon(r);
     const tail = formatStatusTail(r);
     console.log(`  ${padEndStr(r.api, labelW)}  ${icon}${tail}`);
   }
+}
+
+/** 三层状态：✔=协议支持+请求成功(2xx)；⚠=协议支持但请求失败；✖=协议不支持/网络挂 */
+function pickIcon(r: ProbeResult): string {
+  if (!r.ok) return red("✖");
+  if (r.httpStatus >= 200 && r.httpStatus < 300) return green("✔");
+  return yellow("⚠");
 }
 
 /** status / detail 后缀：HTTP 状态码 + detail（如果有） + probePath（始终展示，剥 scheme+host） */
@@ -292,4 +303,14 @@ function toPathOnly(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** 从协议错误信封里挑 error.type / error.code，作为 detail 文本 */
+function extractErrorTag(json: Record<string, unknown>): string | undefined {
+  const e = json.error;
+  if (!e || typeof e !== "object") return undefined;
+  const err = e as Record<string, unknown>;
+  if (typeof err.type === "string") return err.type;
+  if (typeof err.code === "string") return err.code;
+  return undefined;
 }
