@@ -2,7 +2,7 @@
 // cctra test：API 端点探测（协议检测 + 模型列表）
 // ============================================================================
 import { Command } from "commander";
-import { joinUrl, stripCompatSuffix, stripV1 } from "../core/model-fetch";
+import { joinUrl, stripCompatSuffix, stripProbePath } from "../core/model-fetch";
 import { bold, dim, green, red, yellow } from "../ui/format";
 import { padEndStr, printSection } from "../ui/table";
 
@@ -13,7 +13,7 @@ interface ProbeResult {
   ok: boolean;
   httpStatus: number; // 0 = network error
   detail?: string;
-  hitPath?: string; // 探测成功时：命中的具体 URL
+  probePath?: string; // 探测打过的 URL；多候选失败时为逗号分隔的尝试列表
 }
 
 interface ModelsProbeResult extends ProbeResult {
@@ -27,7 +27,7 @@ export function registerTest(program: Command): void {
     .option("-m, --model <model>", "Model to use for API probe requests")
     .action(async (url: string, key: string, opts: { model?: string }) => {
       const base = normalizeURL(url);
-      const root = stripV1(base);
+      const root = stripProbePath(base);
       const headers = buildHeaders(key);
 
       console.log(`${bold("Probing")} ${dim(base)} ...\n`);
@@ -57,6 +57,7 @@ export function registerTest(program: Command): void {
           ok: modelsResult.ok,
           httpStatus: modelsResult.httpStatus,
           detail: modelsResult.detail,
+          probePath: modelsResult.probePath,
         },
       ];
 
@@ -83,18 +84,20 @@ export function registerTest(program: Command): void {
 async function probeModels(base: string, headers: Record<string, string>): Promise<ModelsProbeResult> {
   const url = joinUrl(base, "/v1/models");
   let result = await tryProbeModels(url, headers);
-  if (result.models.length > 0) return result;
+  if (result.models.length > 0) return { ...result, probePath: url };
 
   const stripped = stripCompatSuffix(base);
   if (stripped) {
     const fallbackUrl = joinUrl(stripped, "/v1/models");
     if (fallbackUrl !== url) {
       result = await tryProbeModels(fallbackUrl, headers);
-      if (result.models.length > 0) return { ...result, detail: `retried at ${fallbackUrl}` };
+      if (result.models.length > 0) {
+        return { ...result, detail: `retried at ${fallbackUrl}`, probePath: fallbackUrl };
+      }
     }
   }
 
-  return result;
+  return { ...result, probePath: url };
 }
 
 async function tryProbeModels(url: string, headers: Record<string, string>): Promise<ModelsProbeResult> {
@@ -127,15 +130,16 @@ async function probeAnthropic(
     urls.map(async (url) => ({ url, r: await tryProbeAnthropicOne(url, headers, model) })),
   );
   const hit = results.find(({ r }) => r.ok);
-  if (hit) return { ...hit.r, hitPath: hit.url };
-  return { ...results[0]!.r }; // 全失败：取第一个 URL 的 detail
+  if (hit) return { ...hit.r, probePath: hit.url };
+  // 全失败：probePath 列出全部尝试过的，detail 仍取第一个 URL 的
+  return { ...results[0]!.r, probePath: urls.join(", ") };
 }
 
 async function tryProbeAnthropicOne(
   url: string,
   headers: Record<string, string>,
   model: string,
-): Promise<Omit<ProbeResult, "api" | "hitPath">> {
+): Promise<Omit<ProbeResult, "api" | "probePath">> {
   const body = JSON.stringify({
     model,
     messages: [{ role: "user", content: "hi" }],
@@ -182,18 +186,18 @@ async function probeChat(
     });
     const raw = await res.json().catch(() => null);
     if (!raw || typeof raw !== "object") {
-      return { ok: false, httpStatus: res.status, detail: "non-JSON response" };
+      return { ok: false, httpStatus: res.status, detail: "non-JSON response", probePath: url };
     }
     const json = raw as Record<string, unknown>;
     if (Array.isArray(json.choices)) {
-      return { ok: true, httpStatus: res.status };
+      return { ok: true, httpStatus: res.status, probePath: url };
     }
     if (json.error && typeof json.error === "object" && typeof (json.error as Record<string, unknown>).message === "string") {
-      return { ok: true, httpStatus: res.status };
+      return { ok: true, httpStatus: res.status, probePath: url };
     }
-    return { ok: false, httpStatus: res.status, detail: "response doesn't match Chat protocol" };
+    return { ok: false, httpStatus: res.status, detail: "response doesn't match Chat protocol", probePath: url };
   } catch {
-    return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
+    return { ok: false, httpStatus: 0, detail: "connection failed or timeout", probePath: url };
   }
 }
 
@@ -217,21 +221,21 @@ async function probeResponses(
     });
     const raw = await res.json().catch(() => null);
     if (!raw || typeof raw !== "object") {
-      return { ok: false, httpStatus: res.status, detail: "non-JSON response" };
+      return { ok: false, httpStatus: res.status, detail: "non-JSON response", probePath: url };
     }
     const json = raw as Record<string, unknown>;
     if (Array.isArray(json.output)) {
-      return { ok: true, httpStatus: res.status };
+      return { ok: true, httpStatus: res.status, probePath: url };
     }
     if (json.error && typeof json.error === "object") {
       const e = json.error as Record<string, unknown>;
       if (typeof e.message === "string" || typeof e.code === "string") {
-        return { ok: true, httpStatus: res.status };
+        return { ok: true, httpStatus: res.status, probePath: url };
       }
     }
-    return { ok: false, httpStatus: res.status, detail: "response doesn't match Responses protocol" };
+    return { ok: false, httpStatus: res.status, detail: "response doesn't match Responses protocol", probePath: url };
   } catch {
-    return { ok: false, httpStatus: 0, detail: "connection failed or timeout" };
+    return { ok: false, httpStatus: 0, detail: "connection failed or timeout", probePath: url };
   }
 }
 
@@ -248,7 +252,7 @@ function printResults(results: ProbeResult[]): void {
   }
 }
 
-/** status / detail 后缀：HTTP 状态码 + detail（如果有） + 命中路径（成功时） */
+/** status / detail 后缀：HTTP 状态码 + detail（如果有） + probePath（始终展示，剥 scheme+host） */
 function formatStatusTail(r: ProbeResult): string {
   const parts: string[] = [];
   // 异常 HTTP 状态（非 2xx，非 0=连接失败）
@@ -258,8 +262,8 @@ function formatStatusTail(r: ProbeResult): string {
   if (r.detail) {
     parts.push(dim(r.detail));
   }
-  if (r.hitPath) {
-    parts.push(dim(toPathOnly(r.hitPath)));
+  if (r.probePath) {
+    parts.push(dim(toPathOnly(r.probePath)));
   }
   return parts.length > 0 ? `  (${parts.join(", ")})` : "";
 }

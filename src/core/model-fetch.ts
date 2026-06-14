@@ -51,17 +51,35 @@ export function stripCompatSuffix(url: string): string | null {
 }
 
 /**
- * 剥掉 URL 末尾的 /v1（兼容带或不带末尾 /）。
- * 用于"用户给了带 /v1 的 baseURL，等价于不带 /v1"的探测场景 —— 避免
- * joinUrl 把 /anthropic/v1/messages 拼到 /v1 后变成 /v1/anthropic/v1/messages。
+ * cctra test 探测用：如果 URL 末尾是已知 probe 路径之一，剥掉它，暴露出 "真" baseURL。
+ * 让用户直接粘完整 endpoint URL 也能跑通。
  *
- *   stripV1("http://localhost/v1")  -> "http://localhost"
- *   stripV1("http://localhost/v1/") -> "http://localhost"
- *   stripV1("http://localhost")     -> "http://localhost" (no-op)
- *   stripV1("http://localhost/api") -> "http://localhost/api" (no-op)
+ *   stripProbePath("http://localhost/v1/messages")            -> "http://localhost"
+ *   stripProbePath("http://localhost/anthropic/v1/messages")  -> "http://localhost"
+ *   stripProbePath("http://localhost/anthropic")             -> "http://localhost"
+ *   stripProbePath("http://localhost/v1/chat/completions")   -> "http://localhost"
+ *   stripProbePath("http://localhost/v1/responses")          -> "http://localhost"
+ *   stripProbePath("http://localhost/v1")                    -> "http://localhost"   (covers old stripV1)
+ *   stripProbePath("http://localhost")                       -> "http://localhost"   (no-op)
  */
-export function stripV1(url: string): string {
-  return url.replace(/\/v1\/?$/, "");
+const PROBE_PATHS = [
+  "/anthropic/v1/messages",   // 23 chars — longest first，避免被 /v1/messages 误截
+  "/v1/chat/completions",     // 21
+  "/v1/responses",            // 13
+  "/v1/messages",             // 12
+  "/v1",                      // 3
+  "/anthropic",               // 10
+];
+
+export function stripProbePath(url: string): string {
+  const trimmed = url.replace(/\/+$/, "");
+  // 长路径优先匹配
+  for (const path of [...PROBE_PATHS].sort((a, b) => b.length - a.length)) {
+    if (trimmed.endsWith(path)) {
+      return trimmed.slice(0, trimmed.length - path.length);
+    }
+  }
+  return trimmed;
 }
 
 /**
