@@ -2,7 +2,7 @@
 // cctra test：API 端点探测（协议检测 + 模型列表）
 // ============================================================================
 import { Command } from "commander";
-import { joinUrl, stripCompatSuffix } from "../core/model-fetch";
+import { joinUrl, stripCompatSuffix, stripV1 } from "../core/model-fetch";
 import { bold, dim, green, red, yellow } from "../ui/format";
 import { padEndStr, printSection } from "../ui/table";
 
@@ -13,6 +13,7 @@ interface ProbeResult {
   ok: boolean;
   httpStatus: number; // 0 = network error
   detail?: string;
+  hitPath?: string; // 探测成功时：命中的具体 URL
 }
 
 interface ModelsProbeResult extends ProbeResult {
@@ -26,12 +27,13 @@ export function registerTest(program: Command): void {
     .option("-m, --model <model>", "Model to use for API probe requests")
     .action(async (url: string, key: string, opts: { model?: string }) => {
       const base = normalizeURL(url);
+      const root = stripV1(base);
       const headers = buildHeaders(key);
 
       console.log(`${bold("Probing")} ${dim(base)} ...\n`);
 
       // 1. 先探 models（需要它的结果来选探针模型）
-      const modelsResult = await probeModels(base, headers);
+      const modelsResult = await probeModels(root, headers);
 
       // 2. 决定探针用的模型名
       const probeModel =
@@ -40,9 +42,9 @@ export function registerTest(program: Command): void {
 
       // 3. 并发探 3 个 API 协议
       const [anthropic, chat, responses] = await Promise.all([
-        probeAnthropic(base, headers, probeModel),
-        probeChat(base, headers, probeModel),
-        probeResponses(base, headers, probeModel),
+        probeAnthropic(root, headers, probeModel),
+        probeChat(root, headers, probeModel),
+        probeResponses(root, headers, probeModel),
       ]);
 
       // 4. 渲染结果
@@ -115,7 +117,25 @@ async function probeAnthropic(
   headers: Record<string, string>,
   model: string,
 ): Promise<Omit<ProbeResult, "api">> {
-  const url = joinUrl(base, "/v1/messages");
+  // Anthropic 协议两个候选 URL：标准 /v1/messages + 子前缀 /anthropic/v1/messages
+  // 并发探第一个命中即返回（外层 Promise.all 仍只看到 1 个 promise）
+  const urls = [
+    joinUrl(base, "/v1/messages"),
+    joinUrl(base, "/anthropic/v1/messages"),
+  ];
+  const results = await Promise.all(
+    urls.map(async (url) => ({ url, r: await tryProbeAnthropicOne(url, headers, model) })),
+  );
+  const hit = results.find(({ r }) => r.ok);
+  if (hit) return { ...hit.r, hitPath: hit.url };
+  return { ...results[0]!.r }; // 全失败：取第一个 URL 的 detail
+}
+
+async function tryProbeAnthropicOne(
+  url: string,
+  headers: Record<string, string>,
+  model: string,
+): Promise<Omit<ProbeResult, "api" | "hitPath">> {
   const body = JSON.stringify({
     model,
     messages: [{ role: "user", content: "hi" }],
@@ -228,7 +248,7 @@ function printResults(results: ProbeResult[]): void {
   }
 }
 
-/** status / detail 后缀：HTTP 状态码 + detail（如果有） */
+/** status / detail 后缀：HTTP 状态码 + detail（如果有） + 命中路径（成功时） */
 function formatStatusTail(r: ProbeResult): string {
   const parts: string[] = [];
   // 异常 HTTP 状态（非 2xx，非 0=连接失败）
@@ -237,6 +257,9 @@ function formatStatusTail(r: ProbeResult): string {
   }
   if (r.detail) {
     parts.push(dim(r.detail));
+  }
+  if (r.hitPath) {
+    parts.push(dim(r.hitPath));
   }
   return parts.length > 0 ? `  (${parts.join(", ")})` : "";
 }
