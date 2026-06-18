@@ -191,9 +191,10 @@ function startAndInstallCleanup(port: number): void {
   writePidFile(handle.port);
 
   let cleaned = false;
-  const cleanup = (): void => {
+  const cleanup = (signalName: string): void => {
     if (cleaned) return;
     cleaned = true;
+    logger.info(`${signalName} received — cleaning up`);
     clearPidFile();
     try {
       handle.stop();
@@ -203,14 +204,20 @@ function startAndInstallCleanup(port: number): void {
   };
 
   process.on("SIGINT", () => {
-    cleanup();
+    cleanup("SIGINT");
     process.exit(0);
   });
   process.on("SIGTERM", () => {
-    cleanup();
+    cleanup("SIGTERM");
     process.exit(0);
   });
-  // exit 钩子是同步保险（上面两个 handler 调 process.exit 时会顺带触发）
+  // Windows: svcctl supervisor (v0.4.15+) 发 CTRL_BREAK_EVENT，bun 翻译成 SIGBREAK。
+  // 装 handler 让 cctra graceful cleanup（不装也能退，但走 OS default termination 没机会 flush）。
+  process.on("SIGBREAK" as NodeJS.Signals, () => {
+    cleanup("SIGBREAK");
+    process.exit(0);
+  });
+  // exit 钩子是同步保险（上面 handler 调 process.exit 时会顺带触发）
   process.on("exit", () => {
     clearPidFile();
   });
