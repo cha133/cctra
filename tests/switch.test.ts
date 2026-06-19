@@ -1,6 +1,10 @@
 // ============================================================================
 // switch 命令的核心逻辑测试（绕过 prompts，走 switchAliasOrThrow 纯函数路径）
 // ============================================================================
+
+// 关掉 XDG migration，防止 test 触碰用户真实 ~/.cctra/
+process.env.CCTRA_NO_MIGRATE = "1";
+
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

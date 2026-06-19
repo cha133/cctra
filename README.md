@@ -32,7 +32,7 @@ cctra exposes exactly **3 protocol endpoints** on `127.0.0.1:3133`:
 
 ## Aliases — the only short-name system
 
-cctra has one place where every short name lives: the **`[aliases]` table** in `~/.cctra/config.toml`. An alias is a name → `provider/model` pointer; clients send the alias as their `model` field and cctra routes to the upstream.
+cctra has one place where every short name lives: the **`[aliases]` table** in `~/.config/cctra/config.toml`. An alias is a name → `provider/model` pointer; clients send the alias as their `model` field and cctra routes to the upstream.
 
 Three things to know:
 
@@ -168,7 +168,7 @@ cctra rectify attach kimi normalize-thinking-type # whitelist a provider
 cctra rectify detach kimi normalize-thinking-type
 ```
 
-TOML equivalent (manual edit `~/.cctra/config.toml`):
+TOML equivalent (manual edit `~/.config/cctra/config.toml`):
 
 ```toml
 [rectify.rules]
@@ -205,9 +205,9 @@ cctra serve [--port N]          # foreground HTTP server
 
 ## Configuration
 
-Persisted at `~/.cctra/config.toml` (TOML format, edited via CLI).
+Persisted at `~/.config/cctra/config.toml` (TOML format, edited via CLI).
 
-Plugin configs go in `~/.cctra/plugins/<name>/config.json`.
+Plugin configs go in `~/.config/cctra/plugins/<name>/config.json`.
 
 ## Architecture
 

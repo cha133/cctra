@@ -7,8 +7,9 @@
 // kill / probe / findListeningPid 不在单测范围（跨平台 spawn + 网络），
 // 留给 §Verification 的 PowerShell 手测。
 //
-// 隔离：本测试不设 CCTRA_CONFIG，直接读写 ~/.cctra/serve.pid。
+// 隔离：本测试不设 CCTRA_CONFIG，直接读写 ~/.local/state/cctra/serve.pid。
 // beforeAll/afterAll 备份与还原真实 PID 文件，避免污染运行环境。
+// bunfig.toml 的 preload 脚本设了 CCTRA_NO_MIGRATE=1，migration 不会跑。
 // ============================================================================
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import {
@@ -18,7 +19,7 @@ import {
   mkdirSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -28,12 +29,13 @@ import {
   servePidFilePath,
   writePidFile,
 } from "../src/utils/port-check";
+import { xdgStateHome } from "../src/utils/xdg";
 
 let originalPidFile: string | null = null;
 const backupPath = join(tmpdir(), `cctra-pidfile-backup-${process.pid}.json`);
 
 beforeAll(() => {
-  // 真实环境可能有 ~/.cctra/serve.pid，先备份
+  // 真实环境可能有 ~/.local/state/cctra/serve.pid，先备份
   const live = servePidFilePath();
   if (live && existsSync(live)) {
     originalPidFile = live;
@@ -42,8 +44,8 @@ beforeAll(() => {
   }
   // 跑测试时一定不设 CCTRA_CONFIG
   delete process.env.CCTRA_CONFIG;
-  // 确保 ~/.cctra 存在（readPidFile 不创建，但测试要写坏文件进去）
-  mkdirSync(join(homedir(), ".cctra"), { recursive: true });
+  // 确保 ~/.local/state/cctra 存在（readPidFile 不创建，但测试要写坏文件进去）
+  mkdirSync(join(xdgStateHome(), "cctra"), { recursive: true });
 });
 
 afterAll(() => {

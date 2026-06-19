@@ -1,6 +1,9 @@
 // ============================================================================
 // Migration 测试：legacy Model.alias → Config.aliases 的迁移幂等性
 // ============================================================================
+
+// 关掉 XDG migration（v0.8.0+ 引入），本 test 只测 legacy Model.alias
+process.env.CCTRA_NO_MIGRATE = "1";
 import { describe, test, expect, afterEach, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

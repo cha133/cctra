@@ -1,6 +1,10 @@
 // ============================================================================
 // HTTP 服务器 + 模型解析集成测试
 // ============================================================================
+
+// 关掉 XDG migration，防止 test 触碰用户真实 ~/.cctra/
+process.env.CCTRA_NO_MIGRATE = "1";
+
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { startServer } from "../src/server/serve";
 import { resolveModelRef } from "../src/core/resolve";
@@ -187,7 +191,7 @@ id = "claude-test"
 }
 
 beforeAll(() => {
-  // 隔离测试 config 到临时目录，避免污染 ~/.cctra/config.toml
+  // 隔离测试 config 到临时目录，避免污染 ~/.config/cctra/config.toml
   tempDir = mkdtempSync(join(tmpdir(), "cctra-test-"));
   tempConfigPath = join(tempDir, "config.toml");
   process.env.CCTRA_CONFIG = tempConfigPath;

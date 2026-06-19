@@ -1,6 +1,10 @@
 // ============================================================================
 // Alias 系统单元测试：auto-register 算法、resolve 表分支、namespace 防御
 // ============================================================================
+
+// 关掉 XDG migration，防止 test 触碰用户真实 ~/.cctra/
+process.env.CCTRA_NO_MIGRATE = "1";
+
 import { describe, test, expect } from "bun:test";
 import { canAutoRegisterAlias, autoAliasValue } from "../src/core/alias";
 import { resolveModelRef, ResolveError } from "../src/core/resolve";

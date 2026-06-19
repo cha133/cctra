@@ -1,6 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { parseTOML, stringifyTOML } from "confbox";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
+import { runStartupMigrations, CURRENT_VERSION } from "./migrate";
 import {
   DEFAULT_CONFIG,
   buildDefaultAliases,
@@ -10,10 +13,17 @@ import {
 } from "../types";
 
 /**
- * 从 ~/.cctra/config.toml 加载配置
+ * 从 ~/.config/cctra/config.toml 加载配置
  * 如果文件不存在或损坏，返回默认配置
+ *
+ * 启动早期会跑一次 schema migrations（v0.8.0+：从 ~/.cctra/ 搬到 XDG）。
+ * Migration 跳过条件见 runStartupMigrations doc。
  */
 export function loadConfigFile(): Config {
+  // 1. Schema migrations（XDG 搬移等）。幂等，跳过条件内置。
+  runStartupMigrations();
+
+  // 2. 读 XDG config
   const path = configTomlPath();
   if (!existsSync(path)) {
     return structuredClone(DEFAULT_CONFIG);
@@ -24,7 +34,7 @@ export function loadConfigFile(): Config {
   try {
     data = parseTOML(content) as Partial<Config>;
   } catch {
-    console.warn("⚠ ~/.cctra/config.toml 格式损坏，将按空配置处理");
+    console.warn(`⚠ ${path} 格式损坏，将按空配置处理`);
     return structuredClone(DEFAULT_CONFIG);
   }
 
@@ -38,6 +48,7 @@ export function loadConfigFile(): Config {
         ? (data.aliases as Record<string, string>)
         : buildDefaultAliases(),
     rectify: data.rectify ?? { rules: {}, providers: {} },
+    cctraVersion: data.cctraVersion,
   };
 
   // 兜底：补 kind 字段（手动写的 config 可能漏了）
@@ -85,11 +96,20 @@ function migrateLegacyAliases(config: Config): void {
   }
 }
 
-/** 把配置写到 ~/.cctra/config.toml */
+/**
+ * 把配置写到 ~/.config/cctra/config.toml（原子写：tmp + rename）。
+ * 防御性：确保 cctraVersion = CURRENT_VERSION（如果没设），保证「下个版本删 migration
+ * 代码时所有用户的 config 都已经标过 version」。
+ */
 export function saveConfigFile(config: Config): void {
   ensureCctraDir();
-  const content = stringifyTOML(config as unknown as Record<string, unknown>);
-  writeFileSync(configTomlPath(), content, "utf-8");
+  if ((config.cctraVersion ?? 0) < CURRENT_VERSION) {
+    config.cctraVersion = CURRENT_VERSION;
+  }
+  const path = configTomlPath();
+  const tmp = join(tmpdir(), `cctra-config-${process.pid}-${Date.now()}.toml`);
+  writeFileSync(tmp, stringifyTOML(config as unknown as Record<string, unknown>), "utf-8");
+  renameSync(tmp, path);
 }
 
 // ============================================================================

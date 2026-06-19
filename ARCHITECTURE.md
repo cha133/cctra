@@ -227,7 +227,7 @@ The plugin system exists to let users bring their own auth (OAuth, mTLS, custom 
 - **Declarative** — plugin implements `async getConfig(ctx): UpstreamReady | UpstreamReady[]`. cctra calls it, takes the returned `baseUrl` / `path` / `authHeader` / `apiFormat` / `modelId`, and forwards the request itself. Use this for plugins that just need to mint a token + point cctra at an endpoint.
 - **Functional** — plugin implements `async fetch(req, ctx): CanonicalResponse` (or `fetchStream` for streaming). cctra hands the entire canonical request to the plugin and lets it return the canonical response. Use this when the auth algorithm is per-request (token rotation, request signing) or the upstream is not a normal HTTP LLM endpoint.
 
-If both are implemented, declarative wins (cheaper, more cacheable). cctra exposes to plugins a `PluginContext` containing the user-supplied config JSON, a logger (writes to `~/.cctra/daemon.log` with a plugin-name prefix), a wrapped `fetch` with timeouts and UA, and a per-plugin `cacheGet` / `cacheSet` pair for token caching.
+If both are implemented, declarative wins (cheaper, more cacheable). cctra exposes to plugins a `PluginContext` containing the user-supplied config JSON, a logger (writes to stderr with a plugin-name prefix; persistent log will land at `~/.local/state/cctra/serve.log` once wired), a wrapped `fetch` with timeouts and UA, and a per-plugin `cacheGet` / `cacheSet` pair for token caching.
 
 **Loader (`src/plugin/loader.ts`):** `import()` with a cache-busting query string (`?t=${Date.now()}`) so reloading a plugin file doesn't hit Node's import cache. Results are memoized in a `Map<path, UpstreamPlugin>`; `clearPluginCache()` is called when the user toggles a plugin's `enabled` state via CLI.
 
@@ -322,11 +322,14 @@ The integration tests use a hard-coded port (`31444`). Concurrent test runs woul
 
 **Network binding.** cctra listens on `127.0.0.1:3133` only. It is **not** intended to be exposed to a LAN; there is no auth, no rate limit, no body-size limit. Localhost-only is the threat model.
 
-**Config paths.**
+**Config paths (XDG layout, v0.8.0+).** All paths honor `$XDG_*_HOME` env vars; default to `~/.config` / `~/.local/share` / `~/.local/state` / `~/.cache` on both Linux and Windows (XDG spec says Windows should use `%APPDATA%`, but cctra keeps the same dir shape across platforms for less mental overhead).
 
-- `~/.cctra/config.toml` — the only persisted config. TOML, edited by the CLI, serialized via [confbox](https://github.com/unjs/confbox). Schema migrations run on every load (see `tests/migrate.test.ts` for the migration test suite).
-- `~/.cctra/plugins/<name>/config.json` — per-plugin user config (the JSON the user fills in the `cctra plugin add` wizard). Kept separate so plugin config can be edited / version-controlled independently.
-- `~/.cctra/daemon.log` — log file (used by plugin `logger` and server keepalive diagnostics; not the CLI's stdout).
+- `~/.config/cctra/config.toml` — the only persisted config. TOML, edited by the CLI, serialized via [confbox](https://github.com/unjs/confbox). Schema migrations run on every load (see `tests/migrate.test.ts` for the legacy-alias migration test suite and `tests/xdg-migrate.test.ts` for the v0.8.0+ XDG migration).
+- `~/.config/cctra/plugins/<name>/config.json` — per-plugin user config (the JSON the user fills in the `cctra plugin add` wizard). Kept separate so plugin config can be edited / version-controlled independently. (Currently aspirational — see `src/utils/paths.ts` for the helper; not yet wired to disk.)
+- `~/.cache/cctra/models-cache.json` — model-list disk cache (regenerated on TTL miss).
+- `~/.local/state/cctra/serve.pid` — runtime PID file (recreated every `cctra serve` start).
+
+Old `~/.cctra/` layout is auto-migrated on first run after upgrade; the migration code lives in `src/core/migrate.ts` and is removed 3 versions after v0.8.0 (i.e. v0.11.0+).
 
 **Hot-reload.** Aliases and provider config edits made via the CLI take effect on the next request without a server restart. There is no `cctra reload` command and no signal handler — the resolver reads `config.toml` lazily per request (or per `cctra switch`, which forces a refresh).
 

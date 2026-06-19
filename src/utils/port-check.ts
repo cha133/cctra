@@ -7,7 +7,9 @@
 // ============================================================================
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import * as net from "node:net";
-import { cctraDir, ensureCctraDir } from "./paths";
+import { join } from "node:path";
+import { ensureCctraDir } from "./paths";
+import { xdgStateHome } from "./xdg";
 import { logger } from "./logger";
 
 export interface PidInfo {
@@ -22,10 +24,16 @@ export type KillResult = { ok: true } | { ok: false; reason: string };
 // PID 文件生命周期
 // ----------------------------------------------------------------------------
 
-/** PID 文件路径：~/.cctra/serve.pid。测试用 CCTRA_CONFIG 时返回 null（隔离）。 */
+/**
+ * PID 文件路径：~/.local/state/cctra/serve.pid。
+ *
+ * 测试隔离：CCTRA_CONFIG 有值时返回 null——和 v0.7.x 旧契约一致，确保 test 不会
+ * 触碰真实 home。如果 test 想真读写 PID 文件（像 port-check.test.ts），应 unset
+ * CCTRA_CONFIG 并 backup/restore 这个路径。
+ */
 export function servePidFilePath(): string | null {
   if (process.env.CCTRA_CONFIG) return null;
-  return `${cctraDir()}/serve.pid`;
+  return join(xdgStateHome(), "cctra", "serve.pid");
 }
 
 /** 读 PID 文件。任何解析错误都返回 null（视为「无残留」）。 */

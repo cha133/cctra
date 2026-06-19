@@ -124,7 +124,7 @@ function doSwitch(name: string, target: string, isNew: boolean): void {
   const trimmed = target.trim();
   if (!trimmed) {
     errorOut(
-      "Empty target. To clear an alias, edit `~/.cctra/config.toml` directly.",
+      "Empty target. To clear an alias, edit `~/.config/cctra/config.toml` directly.",
     );
     process.exit(1);
   }

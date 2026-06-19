@@ -3,6 +3,9 @@
 // ----------------------------------------------------------------------------
 // 隔离：CCTRA_CONFIG 指向 mkdtempSync 临时目录（与 tests/server.test.ts 同模式）
 // ============================================================================
+
+// 关掉 XDG migration，防止 test 触碰用户真实 ~/.cctra/
+process.env.CCTRA_NO_MIGRATE = "1";
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

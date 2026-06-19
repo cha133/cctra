@@ -1,6 +1,6 @@
 // ============================================================================
 // 示例插件：标准 OpenAI 兼容端点（无鉴权）
-// 复制到 ~/.cctra/plugins/openai-compatible.js 后用 `cctra plugin add` 注册
+// 复制到 ~/.config/cctra/plugins/openai-compatible.js 后用 `cctra plugin add` 注册
 // ============================================================================
 
 export default {

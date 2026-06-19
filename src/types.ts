@@ -67,7 +67,7 @@ export function buildDefaultAliases(): Record<string, string> {
 }
 
 // ============================================================================
-// 总配置（~/.cctra/config.toml 的 schema）
+// 总配置（~/.config/cctra/config.toml 的 schema）
 // ============================================================================
 
 export interface Config {
@@ -86,6 +86,14 @@ export interface Config {
     rules?: Record<string, boolean>;
     providers?: Record<string, string[]>;
   };
+  /**
+   * cctra schema/layout 版本。v0.8.0 引入：
+   * - 0 = 老 config（无字段）→ 自动跑 XDG 迁移 + bump 到 1
+   * - 1 = 当前 layout（~/.config/cctra + ~/.cache/cctra + ~/.local/state/cctra）
+   *
+   * 跟 package.json version 无关。保留 3 个 cctra 版本后（v0.11.0+）可删除本字段和迁移代码。
+   */
+  cctraVersion?: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
