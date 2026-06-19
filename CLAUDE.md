@@ -27,7 +27,7 @@ bun run src/index.ts serve         # foreground HTTP server
 - Client baseURL convention: `http://127.0.0.1:3133` for Anthropic, `http://127.0.0.1:3133/v1` for OpenAI
 - Model field on requests is either `provider/model` or a model alias (auto-generated when the id is unique across all sources)
 - CLI commands: `add` / `edit` / `rm` / `rename` / `alias` / `show` / `ls` / `plugin` / `serve`
-- Persisted config: `~/.config/cctra/config.toml` via confbox
+- Persisted config: `~/.config/cctra/config.toml` via smol-toml
 - Plugin configs: `~/.config/cctra/plugins/<name>/config.json`
 - Model cache: `~/.cache/cctra/models-cache.json` (regeneratable)
 - Runtime state: `~/.local/state/cctra/serve.pid` (recreated on every serve start)

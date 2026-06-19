@@ -24,7 +24,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseTOML } from "confbox";
+import { parse } from "smol-toml";
 import { migrateToXdg, CURRENT_VERSION } from "../src/core/migrate";
 
 // 关掉 XDG migration（这文件就是测 migration 本身的，不能让它 auto-run）
@@ -93,7 +93,7 @@ pro = "ark/doubao-pro"
     // Assert
     const newConfig = join(newConfigHome, "cctra", "config.toml");
     expect(existsSync(newConfig)).toBe(true);
-    const data = parseTOML(readFileSync(newConfig, "utf-8")) as { port: number; aliases: Record<string, string> };
+    const data = parse(readFileSync(newConfig, "utf-8")) as { port: number; aliases: Record<string, string> };
     expect(data.port).toBe(3133);
     expect(data.aliases.pro).toBe("ark/doubao-pro");
 

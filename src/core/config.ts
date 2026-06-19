@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseTOML, stringifyTOML } from "confbox";
+import { parse, stringify } from "smol-toml";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
 import { runStartupMigrations, CURRENT_VERSION } from "./migrate";
 import {
@@ -32,7 +32,7 @@ export function loadConfigFile(): Config {
   const content = readFileSync(path, "utf-8");
   let data: Partial<Config>;
   try {
-    data = parseTOML(content) as Partial<Config>;
+    data = parse(content) as Partial<Config>;
   } catch {
     console.warn(`⚠ ${path} 格式损坏，将按空配置处理`);
     return structuredClone(DEFAULT_CONFIG);
@@ -108,7 +108,7 @@ export function saveConfigFile(config: Config): void {
   }
   const path = configTomlPath();
   const tmp = join(tmpdir(), `cctra-config-${process.pid}-${Date.now()}.toml`);
-  writeFileSync(tmp, stringifyTOML(config as unknown as Record<string, unknown>), "utf-8");
+  writeFileSync(tmp, stringify(config as unknown as Record<string, unknown>), "utf-8");
   renameSync(tmp, path);
 }
 

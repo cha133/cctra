@@ -20,7 +20,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { parseTOML, stringifyTOML } from "confbox";
+import { parse, stringify } from "smol-toml";
 import { xdgConfigHome, xdgCacheHome } from "../utils/xdg";
 import { configTomlPath, ensureCctraDir } from "../utils/paths";
 
@@ -86,7 +86,7 @@ function shouldSkip(): boolean {
 function readCctraVersionFromDisk(configPath: string): number {
   if (!existsSync(configPath)) return 0;
   try {
-    const data = parseTOML(readFileSync(configPath, "utf-8")) as { cctraVersion?: number };
+    const data = parse(readFileSync(configPath, "utf-8")) as { cctraVersion?: number };
     return data.cctraVersion ?? 0;
   } catch {
     return 0;
@@ -98,14 +98,14 @@ function bumpCctraVersionOnDisk(configPath: string, version: number): void {
   if (!existsSync(configPath)) return;
   let data: Record<string, unknown>;
   try {
-    data = parseTOML(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    data = parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
   } catch {
     return; // 解析失败不致命，下个 save 覆盖
   }
   data.cctraVersion = version;
   ensureCctraDir();
   const tmp = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, stringifyTOML(data), "utf-8");
+  writeFileSync(tmp, stringify(data), "utf-8");
   renameSync(tmp, configPath);
 }
 
@@ -139,7 +139,7 @@ export function migrateToXdg(params: {
       copyFileSync(oldConfig, join(newDir, "config.toml"));
       assertCopyMatches(oldConfig, join(newDir, "config.toml"));
       try {
-        parseTOML(readFileSync(join(newDir, "config.toml"), "utf-8"));
+        parse(readFileSync(join(newDir, "config.toml"), "utf-8"));
       } catch (e) {
         throw new Error(`migrated config.toml is not valid TOML: ${(e as Error).message}`);
       }

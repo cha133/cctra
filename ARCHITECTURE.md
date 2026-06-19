@@ -324,7 +324,7 @@ The integration tests use a hard-coded port (`31444`). Concurrent test runs woul
 
 **Config paths (XDG layout, v0.8.0+).** All paths honor `$XDG_*_HOME` env vars; default to `~/.config` / `~/.local/share` / `~/.local/state` / `~/.cache` on both Linux and Windows (XDG spec says Windows should use `%APPDATA%`, but cctra keeps the same dir shape across platforms for less mental overhead).
 
-- `~/.config/cctra/config.toml` — the only persisted config. TOML, edited by the CLI, serialized via [confbox](https://github.com/unjs/confbox). Schema migrations run on every load (see `tests/migrate.test.ts` for the legacy-alias migration test suite and `tests/xdg-migrate.test.ts` for the v0.8.0+ XDG migration).
+- `~/.config/cctra/config.toml` — the only persisted config. TOML, edited by the CLI, serialized via [smol-toml](https://github.com/squirrelchat/smol-toml). Schema migrations run on every load (see `tests/migrate.test.ts` for the legacy-alias migration test suite and `tests/xdg-migrate.test.ts` for the v0.8.0+ XDG migration).
 - `~/.config/cctra/plugins/<name>/config.json` — per-plugin user config (the JSON the user fills in the `cctra plugin add` wizard). Kept separate so plugin config can be edited / version-controlled independently. (Currently aspirational — see `src/utils/paths.ts` for the helper; not yet wired to disk.)
 - `~/.cache/cctra/models-cache.json` — model-list disk cache (regenerated on TTL miss).
 - `~/.local/state/cctra/serve.pid` — runtime PID file (recreated every `cctra serve` start).
