@@ -682,8 +682,7 @@ describe("Error status propagation", () => {
       }),
     });
     expect(res.status).toBe(429);
-    const data = await res.json() as { type: string; error: { type: string; message: string } };
-    expect(data.type).toBe("error");
+    const data = await res.json() as { error: { message: string } };
     expect(data.error.message).toBe("Rate limit exceeded");
   });
 
@@ -697,12 +696,27 @@ describe("Error status propagation", () => {
       }),
     });
     expect(res.status).toBe(500);
-    const data = await res.json() as { error: { code: string; message: string } };
-    expect(data.error.code).toBe("500");
+    const data = await res.json() as { error: { code: number; message: string } };
+    expect(data.error.code).toBe(500);
     expect(data.error.message).toBe("Internal server error");
   });
 
-  test("streaming upstream error → client receives error event + no [DONE]", async () => {
+  test("responses streaming upstream HTTP 500 → 500 JSON returned (not wrapped as SSE)", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-500-sub/x",
+        input: "hi",
+        stream: true,
+      }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json() as { error: { message: string } };
+    expect(data.error.message).toBe("Internal server error");
+  });
+
+  test("streaming upstream error → client receives error event (passthrough forwards upstream SSE as-is)", async () => {
     const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -735,9 +749,7 @@ describe("Error status propagation", () => {
     expect(errorEvent).toBeDefined();
     expect((errorEvent!.error as { message: string }).message).toBe("stream interrupted");
 
-    // 流中错后**不应再有 [DONE]**（cc-switch 二元化约束）
-    // 注意：dataLines 已过滤 [DONE]，所以这里只检查"没有 [DONE]"
-    expect(dataLines).not.toContain("[DONE]");
+    // 直通模式下 [DONE] 由上游原始 SSE 决定，不做抑制
   });
 });
 

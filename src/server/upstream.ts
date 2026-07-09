@@ -18,6 +18,9 @@ import { cancelableFetch } from "./cancelable-fetch";
 import { logger } from "../utils/logger";
 import { runRectifiers } from "../convert/upstream/rectify";
 import type { CanonicalResponseError } from "../canonical/types";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { xdgStateHome } from "../utils/xdg";
 
 /**
  * 流式路径专用 typed error：携带上游 HTTP status 给 handler 决定 HTTP 响应。
@@ -32,6 +35,16 @@ export class UpstreamError extends Error {
     super(message);
     this.name = "UpstreamError";
   }
+}
+
+/** 上游错误时将请求 body 写到 state 目录供调试。返回文件路径。 */
+function dumpRequestBody(body: string): string {
+  const dir = join(xdgStateHome(), "cctra", "upstream-error");
+  mkdirSync(dir, { recursive: true });
+  const name = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const path = join(dir, name);
+  writeFileSync(path, body, "utf-8");
+  return path;
 }
 
 export interface UpstreamCallOptions {
@@ -58,6 +71,8 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
   const url = joinUrl(ready.baseUrl, ready.path);
   logger.info(`[upstream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
 
+  const bodyStr = JSON.stringify(upstreamBody);
+
   let res: Response;
   try {
     res = await cancelableFetch(url, {
@@ -66,7 +81,7 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
         "Content-Type": "application/json",
         ...ready.authHeader,
       },
-      body: JSON.stringify(upstreamBody),
+      body: bodyStr,
     }, opts.clientSignal);
   } catch (e) {
     return makeError(
@@ -77,6 +92,8 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
   }
 
   if (!res.ok) {
+    const path = dumpRequestBody(bodyStr);
+    logger.info(`[upstream] request body dumped to ${path}`);
     const text = await res.text();
     // 优先抽 body 的 error.message（OpenAI/Anthropic/Responses 标准 shape），
     // 抽不到时回退到 raw text 截 500 字符
@@ -118,7 +135,9 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
   );
 
   const url = joinUrl(ready.baseUrl, ready.path);
-  logger.info(`[upstream:stream] ${opts.route.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
+  logger.info(`[upstream:stream] ${ready.apiFormat} → POST ${url} (model=${opts.canonical.model})`);
+
+  const bodyStr = JSON.stringify(upstreamBody);
 
   const res = await cancelableFetch(url, {
     method: "POST",
@@ -126,12 +145,22 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
       "Content-Type": "application/json",
       ...ready.authHeader,
     },
-    body: JSON.stringify(upstreamBody),
+    body: bodyStr,
   }, opts.clientSignal);
 
   if (!res.ok || !res.body) {
+    const path = dumpRequestBody(bodyStr);
+    logger.info(`[upstream:stream] request body dumped to ${path}`);
     const text = res.body ? await res.text() : `upstream_${res.status}`;
-    throw new UpstreamError(res.status, text.slice(0, 500), text.slice(0, 500));
+    const truncatedText = text.slice(0, 500);
+    let message = truncatedText;
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: unknown } };
+      if (typeof parsed.error?.message === "string") {
+        message = parsed.error.message.slice(0, 500);
+      }
+    } catch { /* non-JSON body, keep raw text */ }
+    throw new UpstreamError(res.status, truncatedText, message);
   }
 
   // 关键：parser 用 ready.apiFormat（plugin 真实返回），不是 route.apiFormat（plugin 占位）
@@ -153,6 +182,50 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
     parser,
     format: (chunk) => formatter.format(chunk),
   };
+}
+
+/** 同协议透传：跳过 Canonical 转换，直接转发原始 JSON body 到上游 */
+export async function callUpstreamDirect(opts: {
+  route: { source: Source; upstreamModelId: string; apiFormat: ApiFormat };
+  body: Record<string, unknown>;
+  clientSignal?: AbortSignal;
+}): Promise<Response> {
+  const ready = await resolveUpstream(opts.route);
+  if (!ready) {
+    return new Response(
+      JSON.stringify({ error: { message: "plugin_returned_no_config" } }),
+      { status: 502 },
+    );
+  }
+
+  const url = joinUrl(ready.baseUrl, ready.path);
+  logger.info(`[upstream:direct] ${ready.apiFormat} → POST ${url} (model=${opts.body.model})`);
+
+  const bodyStr = JSON.stringify(opts.body);
+
+  let res: Response;
+  try {
+    res = await cancelableFetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...ready.authHeader,
+      },
+      body: bodyStr,
+    }, opts.clientSignal);
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ error: { message: `network_error: ${(e as Error).message}` } }),
+      { status: 502 },
+    );
+  }
+
+  if (!res.ok) {
+    const path = dumpRequestBody(bodyStr);
+    logger.info(`[upstream:direct] request body dumped to ${path}`);
+  }
+
+  return res;
 }
 
 // ============================================================================

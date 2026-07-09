@@ -2,7 +2,7 @@
 // POST /v1/responses 处理器
 // ============================================================================
 import { responsesToCanonical } from "../../convert/inbound/responses-to-canonical";
-import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
+import { callUpstream, callUpstreamStream, callUpstreamDirect, UpstreamError } from "../upstream";
 import { canonicalToResponsesResponse } from "../../convert/outbound/canonical-to-responses";
 import { responsesErrorBody } from "../error";
 import { errorResponseToHttpStatus } from "../error-status";
@@ -30,6 +30,20 @@ export async function handleResponses(req: Request): Promise<Response> {
     return Response.json(responsesErrorBody((e as Error).message), { status: 400 });
   }
 
+  // 同协议透传：避免 Canonical 往返转换导致的角色丢失等问题
+  if (route.apiFormat === "openai-responses") {
+    const raw = body as Record<string, unknown>;
+    raw.model = route.upstreamModelId;
+    const isStream = raw.stream === true;
+    const upstreamRes = await callUpstreamDirect({ route, body: raw, clientSignal: req.signal });
+    if (isStream && upstreamRes.ok && upstreamRes.body) {
+      return new Response(upstreamRes.body, {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      });
+    }
+    return upstreamRes;
+  }
+
   const canonical = responsesToCanonical(body as Parameters<typeof responsesToCanonical>[0]);
   canonical.model = route.upstreamModelId;
 
@@ -54,9 +68,14 @@ export async function handleResponses(req: Request): Promise<Response> {
             for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
           }
         } catch (e) {
-          const msg = (e as Error).message;
-          const errName = (e as Error).name;
-          logger.error(`[responses:stream] error: ${msg} [${errName}]`);
+          const err = e as Error;
+          const msg = err.message;
+          const errName = err.name;
+          let statusLog = "";
+          if (err instanceof UpstreamError && err.status !== undefined) {
+            statusLog = ` (status=${err.status})`;
+          }
+          logger.error(`[responses:stream] error: ${msg} [${errName}]${statusLog}`);
           // error+completed 使用 event: 前缀格式（Codex 依赖 event: 分派事件）
           const errEvent = `event: response.error\ndata: ${JSON.stringify({ error: { message: msg }, type: "response.error" })}\n\n`;
           const doneEvent = `event: response.completed\ndata: ${JSON.stringify({ response: { id: `resp_${Date.now()}`, object: "response", model: canonical.model, status: "completed", output: [], incomplete_details: { reason: "upstream_error" } }, type: "response.completed" })}\n\n`;

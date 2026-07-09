@@ -92,6 +92,7 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
       // function_call → assistant 消息带 tool_use block
       // call_id 优先（call-correlation ID），id fallback（item ID），跟 streaming/inbound/responses-stream.ts:239 一致
       // item 级 extras（如 status）挂到 tool_use block —— outbound 时 mergeExtras 还原回 function_call item
+      // 连续 function_call 合并到同一条 assistant 消息，避免 Chat API 中连续 assistant 消息非法
       if (m.type === "function_call") {
         const callId = m.call_id ?? m.id ?? "";
         let input: unknown = {};
@@ -109,7 +110,13 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
           input,
           ...(blockExtras ? { extras: blockExtras } : {}),
         };
-        messages.push({ role: "assistant", content: [block] });
+        // 如果上一条消息已经是 assistant + tool_use，追加 block 而非新建消息
+        const last = messages[messages.length - 1];
+        if (last && last.role === "assistant" && last.content.some((b) => b.type === "tool_use")) {
+          last.content.push(block);
+        } else {
+          messages.push({ role: "assistant", content: [block] });
+        }
         continue;
       }
       // function_call_output → user 消息带 tool_result block
@@ -166,6 +173,13 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
             } else {
               blocks.push({ type: "image", source: { kind: "url", mediaType: "image/*", data: url } });
             }
+          } else {
+            // 未知 content part 类型（如 input_file / input_audio 等），forward-compat 兜底
+            blocks.push({
+              type: "text",
+              text: `[unknown_content_part:${part.type}]`,
+              extras: { openaiResponses: { originalPayload: part } },
+            });
           }
         }
       }
@@ -183,13 +197,18 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
     }
   }
 
-  const tools: CanonicalTool[] | undefined = r.tools
-    ?.filter((t) => t.type === "function")
-    .map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.parameters ?? { type: "object", properties: {} },
-    }));
+  const tools: CanonicalTool[] | undefined = (r.tools ?? []).length > 0
+    ? (r.tools ?? []).flatMap((t) => {
+        // 展平 namespace 类型的工具（如 multi_agent_v1），里面的 function 子工具透出到顶层
+        if (t.type === "function") return [t];
+        if (t.type === "namespace" && Array.isArray(t.tools)) return t.tools as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
+        return [];
+      }).map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.parameters ?? { type: "object", properties: {} },
+      }))
+    : undefined;
 
   return {
     model: r.model ?? "",

@@ -259,7 +259,14 @@ function responsesEvent(eventName: string, data: unknown): string {
 
 /** 非流式：回显 `instructions` 作为 output_text */
 function responsesEcho(body: unknown): Response {
-  const b = body as { instructions?: string; input?: unknown[] };
+  const b = body as { instructions?: string; input?: unknown };
+  let inputCount = 0;
+  if (typeof b.input === "string") {
+    // Responses API 允许 input 为字符串，按 1 条 user message 处理
+    inputCount = 1;
+  } else if (Array.isArray(b.input)) {
+    inputCount = b.input.length;
+  }
   return Response.json({
     id: "resp_mock_echo",
     object: "response",
@@ -269,7 +276,7 @@ function responsesEcho(body: unknown): Response {
     output: [{
       type: "message",
       role: "assistant",
-      content: [{ type: "output_text", text: `echo: ${b.instructions ?? ""} (input_items=${(b.input ?? []).length})` }],
+      content: [{ type: "output_text", text: `echo: ${b.instructions ?? ""} (input_items=${inputCount})` }],
     }],
     usage: { input_tokens: 5, output_tokens: 10 },
   });

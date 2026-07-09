@@ -115,8 +115,12 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
     stop: req.stopSequences,
     stream: req.stream,
     reasoning_effort: req.reasoning?.effort,
-    // 顶层 extras spread（metadata / n / seed / response_format / parallel_tool_calls / stream_options 等）
-    ...(req.extras?.openaiChat ?? {}),
+    // 合并两个 extras 桶：openaiResponses 中 Chat 能理解的字段（metadata / tool_choice / parallel_tool_calls 等）也透传给上游
+    // openaiChat 桶优先级更高（避免冲突时 Chat 特有字段被覆盖）
+    ...(() => {
+      const mergedExtras = { ...(req.extras?.openaiResponses ?? {}), ...(req.extras?.openaiChat ?? {}) };
+      return Object.keys(mergedExtras).length > 0 ? mergedExtras : {};
+    })(),
   };
 }
 

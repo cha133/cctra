@@ -1,35 +1,80 @@
-# cctra
+# CLAUDE.md
 
-Local LLM provider protocol converter + plugin host. Runs a local HTTP server on `127.0.0.1:3133` that translates between **OpenAI Chat Completions / OpenAI Responses / Anthropic Messages** protocols, with **auto-generated per-model aliases** (id 全局唯一 → 静默设 alias=id) and a **local-path plugin system** for non-standard upstream authentication (OAuth, mTLS, etc.).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Quick start
+## Commands
 
 ```bash
-bun install
-bun run src/index.ts add           # interactive provider wizard
-bun run src/index.ts serve         # foreground HTTP server
+bun install                    # install deps
+bun run src/index.ts           # run CLI
+bun run src/index.ts serve     # start HTTP server on 127.0.0.1:3133
+bun test                       # run all tests (bun test runner)
+bunx tsc --noEmit              # type-check only
+bun run verify                 # type-check + test
+
+# run a single test file
+bun test tests/convert.test.ts
+
+# run a single test or describe block (bun supports --match)
+bun test --match "Chat → Canonical"
+
+# run streaming-specific tests (filter by directory or name)
+bun test tests/convert.test.ts --match "stream"
 ```
 
-## Architecture
+## Architecture overview
 
-- `src/canonical/` — protocol-agnostic internal types (`CanonicalRequest` / `CanonicalResponse` / content blocks)
-- `src/convert/` — bidirectional conversions: 3 client protocols ↔ Canonical, 2 upstream protocols ↔ Canonical
-- `src/server/` — Bun.serve() routes, SSE streaming, upstream forwarding
-- `src/plugin/` — local-path plugin loader, plugin author contract (`.d.ts` types)
-- `src/core/alias.ts` — auto-alias 决策（id 全局唯一 → 静默设 alias=id；冲突 → 留空）
+cctra is a local protocol converter for LLMs. A **Canonical** internal type system sits between inbound and outbound conversion, so adding a protocol costs O(N) conversion functions, not O(N²).
 
-## Conventions
+**Key directories:**
 
-- cctra exposes exactly 3 endpoints:
-  - `POST /v1/messages` (Anthropic)
-  - `POST /v1/chat/completions` (OpenAI Chat)
-  - `POST /v1/responses` (OpenAI Responses)
-- Client baseURL convention: `http://127.0.0.1:3133` for Anthropic, `http://127.0.0.1:3133/v1` for OpenAI
-- Model field on requests is either `provider/model` or a model alias (auto-generated when the id is unique across all sources)
-- CLI commands: `add` / `edit` / `rm` / `rename` / `alias` / `show` / `ls` / `plugin` / `serve`
-- Persisted config: `~/.config/cctra/config.toml` via smol-toml
-- Plugin configs: `~/.config/cctra/plugins/<name>/config.json`
-- Model cache: `~/.cache/cctra/models-cache.json` (regeneratable)
-- Runtime state: `~/.local/state/cctra/serve.pid` (recreated on every serve start)
+- `src/canonical/types.ts` — the pivot type system (`CanonicalRequest` / `CanonicalResponse` / content blocks / streaming chunks)
+- `src/convert/inbound/` — 3 client wire formats → Canonical (chat, responses, anthropic)
+- `src/convert/outbound/` — Canonical → 3 client wire formats
+- `src/convert/upstream/` — Canonical → upstream wire (2 formats) + rectifier subsystem for vendor quirks
+- `src/convert/streaming/` — streaming equivalents (3 inbound + 3 outbound), physically separate from non-streaming
+- `src/convert/common/` — shared helpers (extras, content-blocks, tool-calls, system-prompt, usage, reasoning)
+- `src/server/` — Bun.serve() route table, 4 handlers, upstream fetch orchestration, SSE, parsers
+- `src/core/` — alias system, model resolution, config CRUD, namespace defense, model-fetch cache
+- `src/plugin/` — local-path plugin loader + `UpstreamPlugin` author contract
+- `src/commands/` — 13 CLI subcommand implementations
+- `src/ui/` — @clack/prompts wrappers, picocolors formatting, hand-rolled table
 
-See `README.md` for full usage and the plan at `C:\Users\Admin\.claude\plans\happy-growing-fairy.md` for design rationale.
+**Request lifecycle:** handler → `resolveModelRef()` → inbound convert → upstream convert → fetch → parse → outbound convert → respond. See `ARCHITECTURE.md` for full walkthrough.
+
+## Critical patterns
+
+### ProtocolExtras / forward-compat invariant
+
+Unknown fields are never dropped. Each `Canonical*` type has a `ProtocolExtras` bucket per protocol (`anthropic` / `openaiChat` / `openaiResponses`). `splitKnownAndExtras()` preserves unrecognized fields on inbound; `mergeExtras()` spreads them back on outbound. If a field silently disappears, that's a bug.
+
+### Streaming conversion is split from non-streaming
+
+Streaming converters (`src/convert/streaming/`) are physically separate from their non-streaming counterparts because streaming has its own state machine (tool-call-id → stable index mapping for Anthropic's `content_block_index`, delta coalescing, finish-reason detection). Don't merge them.
+
+### Rectifier subsystem
+
+`src/convert/upstream/rectify/` is a per-provider quirk-compatibility layer. Rules are onion-style composable, registered in `registry.ts`, and applied via `runRectifiers()` before upstream fetch. Example: `normalize-thinking-type` coerces Anthropic `thinking.type` shorthand.
+
+### Alias system
+
+`Config.aliases` is a flat `Record<string, string>`. Auto-registration silently creates an alias when a model id is globally unique. `cctra switch` is the only CLI command that hot-reloads the running server (others edit `config.toml`). One namespace for aliases, providers, and plugins — enforced by `namespace.ts`.
+
+### Upstream plugin system
+
+Two modes: **declarative** (`getConfig()` returns endpoint config) and **functional** (`fetch()`/`fetchStream()` receives full CanonicalRequest). Plugins are arbitrary JS files loaded via `import()` with cache-busting. No sandbox in v1.
+
+## Testing conventions
+
+- **Unit tests**: direct function calls with fixture objects. `convert.test.ts` covers all 16 conversion functions (8 non-streaming + 8 streaming with SSE event fixtures).
+- **Integration tests**: `server.test.ts` spins up real `Bun.serve()` + an in-process mock upstream. Covers all 9 protocol combinations (3 client × 3 upstream). Uses `CCTRA_CONFIG` env var + `mkdtempSync` for isolation — never mutates real config.
+- **Mock upstream**: `tests/integration/mock-upstream.ts` provides echo endpoints for each protocol and tool-call fixture endpoints.
+- **Isolation**: set `CCTRA_NO_MIGRATE=1` and `CCTRA_CONFIG` to a temp dir to avoid touching `~/.config/cctra/`.
+- **Hard-coded port**: integration tests use port 31444. Concurrent test runs collide (known debt, not a concern for single-user dev).
+
+## Notable constraints
+
+- Bun-native. Uses `Bun.serve()`, `AbortSignal.any()`, `bun test`. No Node.js compatibility layer.
+- Listens on `127.0.0.1:3133` only. No auth, rate-limit, or body-size limit — localhost-only threat model.
+- XDG paths: `~/.config/cctra/config.toml`, `~/.cache/cctra/models-cache.json`, `~/.local/state/cctra/serve.pid`.
+- Model field: `provider/model` or global alias. Bare model id (no `/`) is rejected unless it matches an alias.

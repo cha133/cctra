@@ -2,7 +2,7 @@
 // POST /v1/messages 处理器
 // ============================================================================
 import { anthropicToCanonical } from "../../convert/inbound/anthropic-to-canonical";
-import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
+import { callUpstream, callUpstreamStream, callUpstreamDirect, UpstreamError } from "../upstream";
 import { canonicalToAnthropicResponse } from "../../convert/outbound/canonical-to-anthropic";
 import { anthropicErrorBody } from "../error";
 import { errorResponseToHttpStatus } from "../error-status";
@@ -29,6 +29,20 @@ export async function handleMessages(req: Request): Promise<Response> {
     route = resolveRoute(b.model, config);
   } catch (e) {
     return Response.json(anthropicErrorBody((e as Error).message), { status: 400 });
+  }
+
+  // 同协议透传：避免 Canonical 往返转换
+  if (route.apiFormat === "anthropic-messages") {
+    const raw = body as Record<string, unknown>;
+    raw.model = route.upstreamModelId;
+    const isStream = raw.stream === true;
+    const upstreamRes = await callUpstreamDirect({ route, body: raw, clientSignal: req.signal });
+    if (isStream && upstreamRes.ok && upstreamRes.body) {
+      return new Response(upstreamRes.body, {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      });
+    }
+    return upstreamRes;
   }
 
   const canonical = anthropicToCanonical(body as Parameters<typeof anthropicToCanonical>[0]);

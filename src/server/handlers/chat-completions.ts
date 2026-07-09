@@ -3,7 +3,7 @@
 // ============================================================================
 import type { Config } from "../../types";
 import { chatToCanonical } from "../../convert/inbound/chat-to-canonical";
-import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
+import { callUpstream, callUpstreamStream, callUpstreamDirect, UpstreamError } from "../upstream";
 import { canonicalToChatResponse } from "../../convert/outbound/canonical-to-chat";
 import { chatErrorBody } from "../error";
 import { errorResponseToHttpStatus } from "../error-status";
@@ -32,6 +32,20 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
     return Response.json(chatErrorBody((e as Error).message), { status: 400 });
   }
 
+  // 同协议透传：避免 Canonical 往返转换
+  if (route.apiFormat === "openai-chat") {
+    const raw = body as Record<string, unknown>;
+    raw.model = route.upstreamModelId;
+    const isStream = raw.stream === true;
+    const upstreamRes = await callUpstreamDirect({ route, body: raw, clientSignal: req.signal });
+    if (isStream && upstreamRes.ok && upstreamRes.body) {
+      return new Response(upstreamRes.body, {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      });
+    }
+    return upstreamRes;
+  }
+
   const canonical = chatToCanonical(body as Parameters<typeof chatToCanonical>[0]);
   // 用 route 的 upstreamModelId 覆盖（避免客户端用 alias 时传错）
   canonical.model = route.upstreamModelId;
@@ -53,8 +67,13 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
               for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
-            const msg = (e as Error).message;
-            logger.error(`[chat-completions:stream] error: ${msg}`);
+            const err = e as Error;
+            const msg = err.message;
+            let statusLog = "";
+            if (err instanceof UpstreamError && err.status !== undefined) {
+              statusLog = ` (status=${err.status})`;
+            }
+            logger.error(`[chat-completions:stream] error: ${msg}${statusLog}`);
             // 所有流式错误都转发给客户端，避免无限挂起
             const errEvent = `data: ${JSON.stringify({
               error: { message: msg, type: "api_error" },
