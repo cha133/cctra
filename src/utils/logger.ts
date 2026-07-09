@@ -15,6 +15,10 @@ export const logger = {
 };
 
 function log(level: string, msg: string): void {
-  const line = `[${new Date().toISOString()}] [${level}] ${msg}\n`;
+  const now = new Date();
+  // 使用本地时区格式化，替代 toISOString() 的 UTC 时间
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
+  const line = `[${ts}] [${level}] ${msg}\n`;
   process.stderr.write(line);
 }

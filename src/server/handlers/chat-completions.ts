@@ -53,15 +53,13 @@ export async function handleChatCompletions(req: Request): Promise<Response> {
               for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
-            logger.error(`[chat-completions:stream] error: ${(e as Error).message}`);
-            if (e instanceof UpstreamError) {
-              // OpenAI Chat 错误 SSE 事件：data: {"error": {...}}
-              // 注意：发完 error 后**不再发 [DONE]**（cc-switch 二元化约束）
-              const errEvent = `data: ${JSON.stringify({
-                error: { message: e.message, type: "upstream_error", code: e.status },
-              })}\n\n`;
-              controller.enqueue(encoder.encode(errEvent));
-            }
+            const msg = (e as Error).message;
+            logger.error(`[chat-completions:stream] error: ${msg}`);
+            // 所有流式错误都转发给客户端，避免无限挂起
+            const errEvent = `data: ${JSON.stringify({
+              error: { message: msg, type: "api_error" },
+            })}\n\n`;
+            try { controller.enqueue(encoder.encode(errEvent)); } catch { /* 客户端已断开 */ }
           } finally {
             controller.close();
           }

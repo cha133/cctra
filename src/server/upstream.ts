@@ -138,7 +138,14 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
   const parser = pickInboundStreamParser(ready.apiFormat);
 
   const formatter = opts.clientFormat === "openai-chat" ? new ChatStreamFormatter()
-    : opts.clientFormat === "openai-responses" ? new ResponsesStreamFormatter()
+    : opts.clientFormat === "openai-responses" ? new ResponsesStreamFormatter({
+        tools: opts.canonical.tools,
+        instructions: opts.canonical.system,
+        temperature: opts.canonical.temperature,
+        maxTokens: opts.canonical.maxTokens,
+        topP: opts.canonical.topP,
+        reasoning: opts.canonical.reasoning,
+      })
     : new AnthropicStreamFormatter();
 
   return {

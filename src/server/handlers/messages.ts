@@ -51,16 +51,15 @@ export async function handleMessages(req: Request): Promise<Response> {
               for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
-            logger.error(`[messages:stream] error: ${(e as Error).message}`);
-            if (e instanceof UpstreamError) {
-              // Anthropic 错误 SSE 事件：event: error / data: {"type":"error",...}
-              // 注意：发完 error 后**不再发 message_stop**（cc-switch 二元化约束）
-              const errEvent = `event: error\ndata: ${JSON.stringify({
-                type: "error",
-                error: { type: "api_error", message: e.message },
-              })}\n\n`;
-              controller.enqueue(encoder.encode(errEvent));
-            }
+            const msg = (e as Error).message;
+            logger.error(`[messages:stream] error: ${msg}`);
+            // 所有流式错误都转发给客户端，使用标准 Anthropic error type (api_error)
+            // 让 Claude Code 能识别并正确处理，避免无限挂起
+            const errEvent = `event: error\ndata: ${JSON.stringify({
+              type: "error",
+              error: { type: "api_error", message: msg },
+            })}\n\n`;
+            try { controller.enqueue(encoder.encode(errEvent)); } catch { /* 客户端已断开 */ }
           } finally {
             controller.close();
           }

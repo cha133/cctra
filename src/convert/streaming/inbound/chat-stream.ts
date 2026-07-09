@@ -26,6 +26,7 @@ interface ChatStreamChunk {
     delta?: {
       role?: string;
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: Array<{
         index: number;
         id?: string;
@@ -98,7 +99,27 @@ export async function* chatStreamToCanonical(
       yield* emitMessageStart();
     }
 
-    // (2) text 增量
+    // (2) reasoning_content 增量（DeepSeek 等推理模型的思考阶段）
+    // 映射为 text block 输出，前缀 [thinking] 标识，确保思考阶段也有数据产出
+    // 防止上游长时间只发 reasoning_content 而 cctra 不产出 chunk 导致连接断开
+    if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+      if (!messageStarted) yield* emitMessageStart();
+      if (textBlockIndex === null) {
+        textBlockIndex = nextBlockIndex++;
+        yield {
+          type: "content_block_start",
+          index: textBlockIndex,
+          content_block: { type: "text", text: "" },
+        };
+      }
+      yield {
+        type: "content_block_delta",
+        index: textBlockIndex,
+        delta: { type: "text_delta", text: delta.reasoning_content },
+      };
+    }
+
+    // (3) text 增量
     if (typeof delta?.content === "string" && delta.content.length > 0) {
       if (!messageStarted) yield* emitMessageStart();
       if (textBlockIndex === null) {
