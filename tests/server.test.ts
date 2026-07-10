@@ -922,6 +922,21 @@ describe("Error status propagation", () => {
     expect(data.error.message).toBe("Internal server error");
   });
 
+  test("streaming upstream HTTP error extracts error.message from JSON body", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "responses-500-sub/x",
+        input: "hi",
+        stream: true,
+      }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json() as { error: { message: string } };
+    expect(data.error.message).toBe("Internal server error");
+  });
+
   test("streaming upstream error → client receives error event + no [DONE]", async () => {
     const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
       method: "POST",

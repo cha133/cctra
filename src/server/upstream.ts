@@ -78,18 +78,9 @@ export async function callUpstream(opts: UpstreamCallOptions): Promise<Canonical
 
   if (!res.ok) {
     const text = await res.text();
-    // 优先抽 body 的 error.message（OpenAI/Anthropic/Responses 标准 shape），
-    // 抽不到时回退到 raw text 截 500 字符
-    let message = text.slice(0, 500);
-    try {
-      const parsed = JSON.parse(text) as { error?: { message?: unknown } };
-      if (typeof parsed.error?.message === "string") {
-        message = parsed.error.message.slice(0, 500);
-      }
-    } catch { /* 非 JSON body，保持 raw text */ }
     return makeError(
       opts.route.upstreamModelId,
-      message,
+      extractUpstreamErrorMessage(text),
       { status: res.status, type: "upstream_error" },
     );
   }
@@ -131,7 +122,11 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
 
   if (!res.ok || !res.body) {
     const text = res.body ? await res.text() : `upstream_${res.status}`;
-    throw new UpstreamError(res.status, text.slice(0, 500), text.slice(0, 500));
+    throw new UpstreamError(
+      res.status,
+      text.slice(0, 500),
+      extractUpstreamErrorMessage(text),
+    );
   }
 
   // 关键：parser 用 ready.apiFormat（plugin 真实返回），不是 route.apiFormat（plugin 占位）
@@ -146,6 +141,17 @@ export async function callUpstreamStream(opts: UpstreamCallOptions): Promise<Ups
     parser,
     format: (chunk) => formatter.format(chunk),
   };
+}
+
+/** 优先读取标准 `{ error: { message } }`，否则回退到截断后的 raw body。 */
+function extractUpstreamErrorMessage(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: unknown } };
+    if (typeof parsed.error?.message === "string") {
+      return parsed.error.message.slice(0, 500);
+    }
+  } catch { /* 非 JSON body，保持 raw text */ }
+  return body.slice(0, 500);
 }
 
 // ============================================================================
