@@ -400,6 +400,136 @@ describe("Streaming formatter error event + terminal suppression", () => {
 });
 
 // ============================================================================
+// Responses SSE 成功路径：事件信封、生命周期、关联字段和最终聚合结果
+// ============================================================================
+
+describe("ResponsesStreamFormatter success lifecycle", () => {
+  function parseEvent(raw: string): { event: string; data: Record<string, unknown> } {
+    const lines = raw.trimEnd().split("\n");
+    const event = lines.find((line) => line.startsWith("event: "))?.slice(7);
+    const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
+    if (!event || !data) throw new Error(`invalid Responses SSE event: ${raw}`);
+    return { event, data: JSON.parse(data) as Record<string, unknown> };
+  }
+
+  test("text emits the complete official lifecycle and aggregates output + usage", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const f = new ResponsesStreamFormatter();
+    const raw = [
+      ...f.format({
+        type: "message_start",
+        message: {
+          id: "resp_test",
+          model: "gpt-test",
+          content: [],
+          stopReason: "end_turn",
+          usage: { inputTokens: 7, outputTokens: 0, cacheReadTokens: 2 },
+        },
+      }),
+      ...f.format({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      ...f.format({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } }),
+      ...f.format({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " world" } }),
+      ...f.format({ type: "content_block_stop", index: 0 }),
+      ...f.format({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { outputTokens: 3 } }),
+      ...f.format({ type: "message_stop" }),
+    ];
+
+    const events = raw.map(parseEvent);
+    expect(events.map(({ event }) => event)).toEqual([
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.delta",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed",
+    ]);
+    expect(events.every(({ event, data }) => data.type === event)).toBe(true);
+    expect(events.map(({ data }) => data.sequence_number)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+    const delta = events.find(({ event }) => event === "response.output_text.delta")!.data;
+    expect(delta).toMatchObject({ item_id: "msg_0", output_index: 0, content_index: 0 });
+
+    const done = events.find(({ event }) => event === "response.output_item.done")!.data;
+    expect(done.item).toEqual({
+      id: "msg_0",
+      type: "message",
+      status: "completed",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Hello world", annotations: [] }],
+    });
+
+    const completed = events.at(-1)!.data.response as {
+      output: unknown[];
+      usage: Record<string, unknown>;
+    };
+    expect(completed.output).toEqual([done.item]);
+    expect(completed.usage).toEqual({
+      input_tokens: 7,
+      input_tokens_details: { cached_tokens: 2 },
+      output_tokens: 3,
+      total_tokens: 10,
+    });
+  });
+
+  test("function call accumulates arguments without content-part events", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const f = new ResponsesStreamFormatter();
+    const raw = [
+      ...f.format({
+        type: "message_start",
+        message: {
+          id: "resp_tool",
+          model: "gpt-test",
+          content: [],
+          stopReason: "end_turn",
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      }),
+      ...f.format({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "call_1", name: "lookup", input: {} },
+      }),
+      ...f.format({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: '{"q"' },
+      }),
+      ...f.format({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: ':"x"}' },
+      }),
+      ...f.format({ type: "content_block_stop", index: 0 }),
+      ...f.format({ type: "message_stop" }),
+    ];
+    const events = raw.map(parseEvent);
+
+    expect(events.some(({ event }) => event.startsWith("response.content_part."))).toBe(false);
+    const argsDone = events.find(({ event }) => event === "response.function_call_arguments.done")!.data;
+    expect(argsDone).toMatchObject({
+      item_id: "fc_0",
+      output_index: 0,
+      name: "lookup",
+      arguments: '{"q":"x"}',
+    });
+    const itemDone = events.find(({ event }) => event === "response.output_item.done")!.data;
+    expect(itemDone.item).toEqual({
+      id: "fc_0",
+      type: "function_call",
+      status: "completed",
+      call_id: "call_1",
+      name: "lookup",
+      arguments: '{"q":"x"}',
+    });
+  });
+});
+
+// ============================================================================
 // Anthropic 路径保真：top-level / block-level / system extras + 未知 type 兜底 + stop_reason 映射
 // 上一轮审计发现的 5 个洞 + TODO.md "5min" 修复
 // ============================================================================

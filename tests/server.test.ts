@@ -151,6 +151,18 @@ updatedAt = 1700000000000
 [[providers.stream-throw-sub.models]]
 id = "x"
 
+[providers.stream-text-sub]
+name = "stream-text-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/stream-text"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.stream-text-sub.models]]
+id = "x"
+
 # Cross-format 集成测试 fixture（0.6.1）：覆盖 9/9 协议组合中缺的 4 个
 [providers.anthropic-to-chat-sub]
 name = "anthropic-to-chat-sub"
@@ -448,6 +460,46 @@ describe("Streaming integration", () => {
     const imagePart = parts.find((p) => p.type === "image_url");
     expect(imagePart).toBeDefined();
     expect(imagePart!.image_url!.url).toBe(`data:image/png;base64,${base64}`);
+  });
+
+  test("Responses client receives complete SSE lifecycle from Chat upstream", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "stream-text-sub/x", input: "hi", stream: true }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toBeNull();
+
+    const rawEvents = await collectSse(res.body!);
+    const events = rawEvents.map((raw) => {
+      const lines = raw.split("\n");
+      const event = lines.find((line) => line.startsWith("event: "))?.slice(7);
+      const data = lines.find((line) => line.startsWith("data: "))?.slice(6);
+      if (!event || !data) throw new Error(`invalid Responses SSE event: ${raw}`);
+      return { event, data: JSON.parse(data) as Record<string, unknown> };
+    });
+
+    expect(events.map(({ event }) => event)).toEqual([
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.delta",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed",
+    ]);
+    expect(events.every(({ event, data }) => data.type === event)).toBe(true);
+    const completed = events.at(-1)!.data.response as { output: Array<Record<string, unknown>> };
+    expect(completed.output[0]).toMatchObject({
+      id: "msg_0",
+      type: "message",
+      status: "completed",
+      content: [{ type: "output_text", text: "Hello world", annotations: [] }],
+    });
   });
 
   test("client abort propagates to upstream fetch", async () => {
