@@ -140,6 +140,37 @@ describe("Responses → Canonical", () => {
     expect(can.messages[2]?.content[0]).toEqual({ type: "tool_result", toolUseId: "c1", content: "42" });
   });
 
+  test("consecutive function calls and outputs merge into canonical tool turns", () => {
+    const req = {
+      model: "x",
+      input: [
+        { type: "function_call" as const, call_id: "c1", name: "first", arguments: '{"x":1}' },
+        { type: "function_call" as const, call_id: "c2", name: "second", arguments: '{"y":2}' },
+        { type: "function_call_output" as const, call_id: "c1", output: "one" },
+        { type: "function_call_output" as const, call_id: "c2", output: "two" },
+      ],
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+
+    expect(can.messages).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "c1", name: "first", input: { x: 1 } },
+          { type: "tool_use", id: "c2", name: "second", input: { y: 2 } },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", toolUseId: "c1", content: "one" },
+          { type: "tool_result", toolUseId: "c2", content: "two" },
+        ],
+      },
+    ]);
+    expect(canonicalToResponses(can).input).toEqual(req.input);
+  });
+
   test("output_text / refusal 往返不丢", () => {
     const can = responsesToCanonical({
       model: "x",
@@ -164,6 +195,40 @@ describe("Responses → Canonical", () => {
       text: "[unknown_input_item:web_search_call]",
       extras: { openaiResponses: { originalPayload: { type: "web_search_call", query: "x" } } },
     });
+  });
+
+  test("unknown message content part degrades visibly and round-trips in place", () => {
+    const req = {
+      model: "x",
+      input: [{
+        type: "message" as const,
+        role: "user" as const,
+        content: [
+          { type: "input_text", text: "before" },
+          { type: "future_blob", blob_id: "blob-1", mode: "preview" },
+          { type: "input_text", text: "after" },
+        ],
+      }],
+    };
+    const can = responsesToCanonical(req as Parameters<typeof responsesToCanonical>[0]);
+
+    expect(can.messages[0]?.content).toEqual([
+      { type: "text", text: "before" },
+      {
+        type: "text",
+        text: "[unknown_content_part:future_blob]",
+        extras: {
+          openaiResponses: {
+            originalContentPart: { type: "future_blob", blob_id: "blob-1", mode: "preview" },
+          },
+        },
+      },
+      { type: "text", text: "after" },
+    ]);
+    expect(canonicalToResponses(can).input).toEqual([{
+      role: "user",
+      content: req.input[0]!.content,
+    }]);
   });
 });
 
@@ -1156,6 +1221,31 @@ describe("Chat passthrough fidelity", () => {
 // ============================================================================
 
 describe("Responses passthrough fidelity", () => {
+  test("tool results retain their exact position relative to user content", () => {
+    const upstream = canonicalToResponses({
+      model: "gpt-5",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "before" },
+          { type: "tool_result", toolUseId: "c1", content: "one" },
+          { type: "text", text: "between" },
+          { type: "tool_result", toolUseId: "c2", content: "two" },
+          { type: "text", text: "after" },
+        ],
+      }],
+      stream: false,
+    });
+
+    expect(upstream.input).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "before" }] },
+      { type: "function_call_output", call_id: "c1", output: "one" },
+      { role: "user", content: [{ type: "input_text", text: "between" }] },
+      { type: "function_call_output", call_id: "c2", output: "two" },
+      { role: "user", content: [{ type: "input_text", text: "after" }] },
+    ]);
+  });
+
   test("top-level unknown fields land in extras.openaiResponses and round-trip", () => {
     const req = {
       model: "gpt-5",

@@ -1,15 +1,17 @@
 // ============================================================================
 // Canonical → OpenAI Responses 请求（发给上游用）
 // ============================================================================
-import type { CanonicalRequest, CanonicalContentBlock, ImageSource, ProtocolExtras } from "../../canonical/types";
+import type { CanonicalRequest, CanonicalContentBlock, ImageSource } from "../../canonical/types";
 import { systemToString } from "../common/system-prompt";
 import { mergeExtras } from "../common/extras";
 
 // 每个变体加 `[k: string]: unknown` —— 允许 forward-compat 字段（function_call.status / message.id 等未来字段）在 wire 出现
 // （mergeExtras 会注入；TS 需要知道这是合法的）
+type ResponsesContentPart = { type: string; [k: string]: unknown };
+
 type ResponsesInputItem =
-  | { role: "user"; content: Array<{ type: "input_text"; text: string; [k: string]: unknown } | { type: "input_image"; image_url: string; [k: string]: unknown }>; [k: string]: unknown }
-  | { role: "assistant"; content: Array<{ type: "output_text"; text: string; [k: string]: unknown } | { type: "refusal"; refusal: string; [k: string]: unknown }>; [k: string]: unknown }
+  | { role: "user"; content: ResponsesContentPart[]; [k: string]: unknown }
+  | { role: "assistant"; content: ResponsesContentPart[]; [k: string]: unknown }
   | { type: "function_call"; call_id: string; name: string; arguments: string; [k: string]: unknown }
   | { type: "function_call_output"; call_id: string; output: string; [k: string]: unknown };
 
@@ -41,61 +43,57 @@ export function canonicalToResponses(req: CanonicalRequest): ResponsesUpstreamRe
   const instructions = systemToString(req.system);
 
   for (const m of req.messages) {
-    // 抽 assistant tool_use 块 → 平级 function_call item（不是 message）
     if (m.role === "assistant") {
-      const toolUses = m.content.filter((b): b is { type: "tool_use"; id: string; name: string; input: unknown; extras?: ProtocolExtras } => b.type === "tool_use");
-      const otherBlocks = m.content.filter((b) => b.type !== "tool_use");
+      let content: ResponsesContentPart[] = [];
+      const flushContent = () => {
+        if (content.length === 0) return;
+        input.push(mergeExtras({ role: "assistant" as const, content }, m.extras, "openaiResponses"));
+        content = [];
+      };
 
-      // assistant message（含 text / refusal）
-      if (otherBlocks.length > 0) {
-        const content: Array<{ type: "output_text"; text: string } | { type: "refusal"; refusal: string }> = [];
-        for (const b of otherBlocks) {
-          if (b.type === "text") content.push({ type: "output_text", text: b.text });
-          else if (b.type === "refusal") content.push({ type: "refusal", refusal: b.refusal });
-          // 忽略 thinking / image / document / tool_result 在 assistant message
+      for (const block of m.content) {
+        if (block.type === "tool_use") {
+          flushContent();
+          input.push(mergeExtras({
+            type: "function_call" as const,
+            call_id: block.id,
+            name: block.name,
+            arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
+          }, block.extras, "openaiResponses"));
+          continue;
         }
-        if (content.length > 0) {
-          // 透传 assistant message 级别 extras（openaiResponses 桶）
-          input.push(mergeExtras({ role: "assistant" as const, content }, m.extras, "openaiResponses"));
-        }
+        const original = originalContentPart(block);
+        if (original) content.push(original);
+        else if (block.type === "text") content.push({ type: "output_text", text: block.text });
+        else if (block.type === "refusal") content.push({ type: "refusal", refusal: block.refusal });
+        // thinking / image / document / tool_result 不属于 Responses assistant message content
       }
-
-      // function_call item（每个 tool_use 一个）；block 级 extras（如 status）从 tool_use block 透传
-      for (const u of toolUses) {
-        input.push(mergeExtras({
-          type: "function_call" as const,
-          call_id: u.id,
-          name: u.name,
-          arguments: typeof u.input === "string" ? u.input : JSON.stringify(u.input ?? {}),
-        }, u.extras, "openaiResponses"));
-      }
+      flushContent();
     } else {
-      // user 消息
-      const toolResults = m.content.filter((b): b is { type: "tool_result"; toolUseId: string; content: string | CanonicalContentBlock[]; isError?: boolean; extras?: ProtocolExtras } => b.type === "tool_result");
-      const otherBlocks = m.content.filter((b) => b.type !== "tool_result");
+      let content: ResponsesContentPart[] = [];
+      const flushContent = () => {
+        if (content.length === 0) return;
+        input.push(mergeExtras({ role: "user" as const, content }, m.extras, "openaiResponses"));
+        content = [];
+      };
 
-      // function_call_output item（每个 tool_result 一个）；block 级 extras 从 tool_result block 透传
-      for (const tr of toolResults) {
-        input.push(mergeExtras({
-          type: "function_call_output" as const,
-          call_id: tr.toolUseId,
-          output: typeof tr.content === "string" ? tr.content : extractTextFromBlocks(tr.content),
-        }, tr.extras, "openaiResponses"));
-      }
-
-      // user message（含 text / image）
-      if (otherBlocks.length > 0) {
-        const content: Array<{ type: "input_text"; text: string } | { type: "input_image"; image_url: string }> = [];
-        for (const b of otherBlocks) {
-          if (b.type === "text") content.push({ type: "input_text", text: b.text });
-          else if (b.type === "image") content.push({ type: "input_image", image_url: imageToDataUrl(b.source) });
-          // 忽略 document / thinking / refusal 在 user message
+      for (const block of m.content) {
+        if (block.type === "tool_result") {
+          flushContent();
+          input.push(mergeExtras({
+            type: "function_call_output" as const,
+            call_id: block.toolUseId,
+            output: typeof block.content === "string" ? block.content : extractTextFromBlocks(block.content),
+          }, block.extras, "openaiResponses"));
+          continue;
         }
-        if (content.length > 0) {
-          // 透传 user message 级别 extras
-          input.push(mergeExtras({ role: "user" as const, content }, m.extras, "openaiResponses"));
-        }
+        const original = originalContentPart(block);
+        if (original) content.push(original);
+        else if (block.type === "text") content.push({ type: "input_text", text: block.text });
+        else if (block.type === "image") content.push({ type: "input_image", image_url: imageToDataUrl(block.source) });
+        // document / thinking / refusal 不属于 Responses user message content
       }
+      flushContent();
     }
   }
 
@@ -118,6 +116,13 @@ export function canonicalToResponses(req: CanonicalRequest): ResponsesUpstreamRe
     // 顶层 extras spread（background / include / metadata / store / text / tool_choice 等）
     ...(req.extras?.openaiResponses ?? {}),
   };
+}
+
+function originalContentPart(block: CanonicalContentBlock): ResponsesContentPart | null {
+  const original = block.extras?.openaiResponses?.originalContentPart;
+  if (typeof original !== "object" || original === null || Array.isArray(original)) return null;
+  if (typeof (original as { type?: unknown }).type !== "string") return null;
+  return original as ResponsesContentPart;
 }
 
 function imageToDataUrl(src: ImageSource): string {

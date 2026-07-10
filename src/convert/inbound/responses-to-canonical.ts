@@ -84,6 +84,7 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
   const r = known as ResponsesRequest;
 
   const messages: CanonicalMessage[] = [];
+  let previousInputType: string | null = null;
 
   if (typeof r.input === "string") {
     messages.push({ role: "user", content: [{ type: "text", text: r.input }] });
@@ -109,7 +110,12 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
           input,
           ...(blockExtras ? { extras: blockExtras } : {}),
         };
-        messages.push({ role: "assistant", content: [block] });
+        if (previousInputType === "function_call") {
+          messages.at(-1)!.content.push(block);
+        } else {
+          messages.push({ role: "assistant", content: [block] });
+        }
+        previousInputType = "function_call";
         continue;
       }
       // function_call_output → user 消息带 tool_result block
@@ -128,7 +134,12 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
           content: m.output ?? "",
           ...(blockExtras ? { extras: blockExtras } : {}),
         };
-        messages.push({ role: "user", content: [block] });
+        if (previousInputType === "function_call_output") {
+          messages.at(-1)!.content.push(block);
+        } else {
+          messages.push({ role: "user", content: [block] });
+        }
+        previousInputType = "function_call_output";
         continue;
       }
       // 未知 type（如 web_search_call / mcp_call / file_search_call 等）：占位 text + extras 存原始 payload（forward-compat 兜底）
@@ -144,6 +155,7 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
             extras: { openaiResponses: { originalPayload: m as unknown as Record<string, unknown> } },
           }],
         });
+        previousInputType = unknownType;
         continue;
       }
 
@@ -154,18 +166,24 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
         blocks.push({ type: "text", text: m.content });
       } else {
         for (const part of m.content) {
-          if ((part.type === "input_text" || part.type === "output_text") && part.text) {
+          if ((part.type === "input_text" || part.type === "output_text") && typeof part.text === "string") {
             blocks.push({ type: "text", text: part.text });
-          } else if (part.type === "refusal" && part.refusal) {
+          } else if (part.type === "refusal" && typeof part.refusal === "string") {
             blocks.push({ type: "refusal", refusal: part.refusal });
-          } else if (part.type === "input_image" && part.image_url) {
+          } else if (part.type === "input_image" && typeof part.image_url === "string") {
             const url = part.image_url;
             if (url.startsWith("data:")) {
               const match = url.match(/^data:([^;]+);base64,(.+)$/);
-              if (match) blocks.push({ type: "image", source: { kind: "base64", mediaType: match[1]!, data: match[2]! } });
+              if (match) {
+                blocks.push({ type: "image", source: { kind: "base64", mediaType: match[1]!, data: match[2]! } });
+              } else {
+                blocks.push(unknownContentPart(part));
+              }
             } else {
               blocks.push({ type: "image", source: { kind: "url", mediaType: "image/*", data: url } });
             }
+          } else {
+            blocks.push(unknownContentPart(part));
           }
         }
       }
@@ -180,6 +198,7 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
         content: blocks,
         ...(Object.keys(extras.openaiResponses ?? {}).length > 0 ? { extras } : {}),
       });
+      previousInputType = "message";
     }
   }
 
@@ -203,5 +222,13 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
     previousResponseId: r.previous_response_id,
     reasoning: r.reasoning,
     ...(Object.keys(topExtras.openaiResponses ?? {}).length > 0 ? { extras: topExtras } : {}),
+  };
+}
+
+function unknownContentPart(part: { type: string; [k: string]: unknown }): CanonicalContentBlock {
+  return {
+    type: "text",
+    text: `[unknown_content_part:${part.type}]`,
+    extras: { openaiResponses: { originalContentPart: part } },
   };
 }
