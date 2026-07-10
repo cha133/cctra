@@ -51,16 +51,15 @@ export async function handleResponses(req: Request): Promise<Response> {
               for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
-            logger.error(`[responses:stream] error: ${(e as Error).message}`);
-            if (e instanceof UpstreamError) {
-              // Responses 错误 SSE 事件：event: response.error / data: {...}
-              // 注意：发完 error 后**不再发 response.completed**（cc-switch 二元化约束）
-              const errEvent = `event: response.error\ndata: ${JSON.stringify({
-                code: e.status?.toString() ?? "upstream_error",
-                message: e.message,
-              })}\n\n`;
-              controller.enqueue(encoder.encode(errEvent));
-            }
+            const error = e instanceof Error ? e : new Error(String(e));
+            logger.error(`[responses:stream] error: ${error.message}`);
+            // 流已经返回 200，所有运行时异常都必须用协议内 error 事件通知客户端。
+            // 发完 error 后直接关闭，不发送 response.completed 或 [DONE]。
+            const errEvent = `event: response.error\ndata: ${JSON.stringify({
+              code: e instanceof UpstreamError ? e.status?.toString() ?? "upstream_error" : "upstream_error",
+              message: error.message,
+            })}\n\n`;
+            controller.enqueue(encoder.encode(errEvent));
           } finally {
             controller.close();
           }

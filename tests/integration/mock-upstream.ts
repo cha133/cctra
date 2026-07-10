@@ -9,6 +9,7 @@
 //   POST /chat/track-abort         记录请求是否被 abort
 //   POST /chat/error-401/429/500   返回 4xx/5xx 错误（验证错误码透传）
 //   POST /chat/stream-error        返回 200 + SSE error event（验证流中错不发终止事件）
+//   POST /chat/stream-throw        返回会让 Chat 流解析器抛普通 Error 的合法 SSE
 //   POST /anthropic/messages/echo  回显 system + messages 数（cross-format 测试用）
 //   POST /v1/responses/echo        回显 instructions + input 数（cross-format 测试用）
 //   GET  /v1/models                返回固定模型列表
@@ -62,6 +63,7 @@ export function startMockUpstream(): MockUpstreamHandle {
       if (path === "/chat/error-429") return chatErrorResponse(429, "Rate limit exceeded");
       if (path === "/chat/error-500") return chatErrorResponse(500, "Internal server error");
       if (path === "/chat/stream-error") return chatStreamError();
+      if (path === "/chat/stream-throw") return chatStreamThrow();
       // Anthropic Messages 路径（cross-format 测试用：验 cctra 转发到 Anthropic-messages 上游）
       if (path === "/anthropic/messages/echo") return anthropicEcho(body);
       // OpenAI Responses 路径（验证 L.2 上游协议修复）
@@ -214,6 +216,25 @@ function chatStreamError(): Response {
       })));
       // 模拟某些上游会再发 [DONE]（验证 formatter 抑制）
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+/** 200 + 合法 SSE，但 tool_calls wire shape 错误，令流解析器抛普通 TypeError。 */
+function chatStreamThrow(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(sseChunk({
+        choices: [{ index: 0, delta: { role: "assistant", content: "Hello" }, finish_reason: null }],
+      })));
+      controller.enqueue(encoder.encode(sseChunk({
+        choices: [{ index: 0, delta: { tool_calls: 42 }, finish_reason: null }],
+      })));
       controller.close();
     },
   });

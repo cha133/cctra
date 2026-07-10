@@ -2,7 +2,7 @@
 // POST /v1/messages 处理器
 // ============================================================================
 import { anthropicToCanonical } from "../../convert/inbound/anthropic-to-canonical";
-import { callUpstream, callUpstreamStream, UpstreamError } from "../upstream";
+import { callUpstream, callUpstreamStream } from "../upstream";
 import { canonicalToAnthropicResponse } from "../../convert/outbound/canonical-to-anthropic";
 import { anthropicErrorBody } from "../error";
 import { errorResponseToHttpStatus } from "../error-status";
@@ -51,16 +51,15 @@ export async function handleMessages(req: Request): Promise<Response> {
               for (const s of format(chunk)) controller.enqueue(encoder.encode(s));
             }
           } catch (e) {
-            logger.error(`[messages:stream] error: ${(e as Error).message}`);
-            if (e instanceof UpstreamError) {
-              // Anthropic 错误 SSE 事件：event: error / data: {"type":"error",...}
-              // 注意：发完 error 后**不再发 message_stop**（cc-switch 二元化约束）
-              const errEvent = `event: error\ndata: ${JSON.stringify({
-                type: "error",
-                error: { type: "api_error", message: e.message },
-              })}\n\n`;
-              controller.enqueue(encoder.encode(errEvent));
-            }
+            const error = e instanceof Error ? e : new Error(String(e));
+            logger.error(`[messages:stream] error: ${error.message}`);
+            // 流已经返回 200，所有运行时异常都必须用协议内 error 事件通知客户端。
+            // 发完 error 后直接关闭，不发送 message_stop。
+            const errEvent = `event: error\ndata: ${JSON.stringify({
+              type: "error",
+              error: { type: "api_error", message: error.message },
+            })}\n\n`;
+            controller.enqueue(encoder.encode(errEvent));
           } finally {
             controller.close();
           }

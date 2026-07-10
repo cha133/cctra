@@ -139,6 +139,18 @@ updatedAt = 1700000000000
 [[providers.stream-error-sub.models]]
 id = "x"
 
+[providers.stream-throw-sub]
+name = "stream-throw-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/stream-throw"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.stream-throw-sub.models]]
+id = "x"
+
 # Cross-format 集成测试 fixture（0.6.1）：覆盖 9/9 协议组合中缺的 4 个
 [providers.anthropic-to-chat-sub]
 name = "anthropic-to-chat-sub"
@@ -738,6 +750,57 @@ describe("Error status propagation", () => {
     // 流中错后**不应再有 [DONE]**（cc-switch 二元化约束）
     // 注意：dataLines 已过滤 [DONE]，所以这里只检查"没有 [DONE]"
     expect(dataLines).not.toContain("[DONE]");
+  });
+
+  test.each([
+    {
+      name: "OpenAI Chat",
+      path: "/v1/chat/completions",
+      body: { model: "stream-throw-sub/x", messages: [{ role: "user", content: "hi" }], stream: true },
+      errorEvent: undefined,
+      successMarkers: ["[DONE]"],
+    },
+    {
+      name: "Anthropic Messages",
+      path: "/v1/messages",
+      body: { model: "stream-throw-sub/x", messages: [{ role: "user", content: "hi" }], max_tokens: 100, stream: true },
+      errorEvent: "error",
+      successMarkers: ["message_stop"],
+    },
+    {
+      name: "OpenAI Responses",
+      path: "/v1/responses",
+      body: { model: "stream-throw-sub/x", input: "hi", stream: true },
+      errorEvent: "response.error",
+      successMarkers: ["response.completed", "[DONE]"],
+    },
+  ])("ordinary stream failure is explicit for $name and has no success terminal", async ({
+    path, body, errorEvent, successMarkers,
+  }) => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).not.toBeNull();
+
+    const rawEvents = await collectSse(res.body!);
+    const parsedEvents = rawEvents.map((raw) => {
+      const lines = raw.split("\n");
+      const event = lines.find((line) => line.startsWith("event:"))?.slice(6).trim();
+      const data = lines.find((line) => line.startsWith("data:"))?.slice(5).trim() ?? "";
+      return { event, data };
+    });
+
+    const error = parsedEvents.find(({ event, data }) =>
+      (errorEvent ? event === errorEvent : data.includes('"error"'))
+      && data.includes("is not iterable"));
+    expect(error).toBeDefined();
+
+    for (const marker of successMarkers) {
+      expect(rawEvents.some((event) => event.includes(marker))).toBe(false);
+    }
   });
 });
 
