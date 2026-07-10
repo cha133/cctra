@@ -438,6 +438,24 @@ describe("Streaming integration", () => {
     expect(imagePart!.image_url!.url).toBe(`data:image/png;base64,${base64}`);
   });
 
+  test("non-streaming request omits stream_options in upstream body", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "echo-sub/x",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const echoed = JSON.parse(data.choices[0]!.message.content) as Record<string, unknown>;
+    // stream_options must NOT be in the upstream body when stream=false
+    expect(echoed).not.toHaveProperty("stream_options");
+    expect(echoed.stream).toBe(false);
+  });
+
   test("client abort propagates to upstream fetch", async () => {
     const beforeCount = mockUpstream!.captured.length;
     const ac = new AbortController();

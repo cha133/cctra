@@ -115,7 +115,8 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
     stop: req.stopSequences,
     stream: req.stream,
     // OpenAI Chat 流式中返回 usage 的开关。上游不支持时静默忽略。
-    stream_options: { include_usage: true },
+    // 只在 stream=true 时设置，否则上游会报 400（openai spec: stream_options only valid when stream=true）
+    ...(req.stream ? { stream_options: { include_usage: true } } : {}),
     reasoning_effort: req.reasoning?.effort,
     // 合并两个 extras 桶：openaiResponses 中 Chat 能理解的字段（metadata / tool_choice / parallel_tool_calls 等）也透传给上游
     // openaiChat 桶优先级更高（避免冲突时 Chat 特有字段被覆盖）

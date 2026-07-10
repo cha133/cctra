@@ -728,6 +728,7 @@ describe("Chat passthrough fidelity", () => {
       model: "gpt-4",
       messages: [{ role: "user" as const, content: "hi" }],
       n: 3,
+      stream: true,
       stream_options: { include_usage: true },
       logprobs: true,
       top_logprobs: 5,
