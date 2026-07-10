@@ -6,8 +6,8 @@
 //   - delta.reasoning_content → 独立 thinking block
 //   - delta.content 首次/累积 → content_block_start(text) + content_block_delta(text_delta)
 //   - delta.tool_calls[i] 多 chunk 拼接 → content_block_start(tool_use) + input_json_delta
-//   - finish_reason 非 null → 关掉所有打开的 block + message_delta + message_stop
-//   - [DONE] → 安全收尾（idempotent）
+//   - finish_reason 非 null → 关掉所有打开的 block，暂存 stop reason
+//   - usage-only chunk / [DONE] / EOF → message_delta + message_stop（idempotent）
 // ============================================================================
 
 import type { CanonicalChunk, StopReason } from "../../../canonical/types";
@@ -50,6 +50,7 @@ export async function* chatStreamToCanonical(
   let textBlockIndex: number | null = null;              // 0 通常；null 表示还没开 text block
   let messageStarted = false;
   let messageStopped = false;
+  let pendingStopReason: StopReason | null = null;
   let upstreamModel = "";
   let upstreamId = "";
 
@@ -57,7 +58,7 @@ export async function* chatStreamToCanonical(
   for await (const ev of parseSseStream(rawStream)) {
     if (ev.data === "[DONE]") {
       if (!messageStopped) {
-        yield* closeAll();
+        yield* finalize();
       }
       continue;
     }
@@ -82,14 +83,15 @@ export async function* chatStreamToCanonical(
     if (!choice) {
       // 可能是 usage-only chunk
       if (parsed.usage && messageStarted && !messageStopped) {
-        yield {
-          type: "message_delta",
-          delta: {},
-          usage: {
-            inputTokens: parsed.usage.prompt_tokens ?? 0,
-            outputTokens: parsed.usage.completion_tokens ?? 0,
-          },
+        const usage = {
+          inputTokens: parsed.usage.prompt_tokens ?? 0,
+          outputTokens: parsed.usage.completion_tokens ?? 0,
         };
+        if (pendingStopReason !== null) {
+          yield* finalize(usage);
+        } else {
+          yield { type: "message_delta", delta: {}, usage };
+        }
       }
       continue;
     }
@@ -193,14 +195,15 @@ export async function* chatStreamToCanonical(
       }
     }
 
-    // (5) finish_reason → 关掉所有 block + message_delta + message_stop
+    // (5) finish_reason → 先关掉所有 block，等待可能紧随其后的 usage-only chunk
     if (choice.finish_reason) {
-      yield* closeAll(choice.finish_reason);
+      yield* closeBlocks();
+      pendingStopReason = mapStopReason(choice.finish_reason);
     }
   }
 
   // 流自然结束但没收到 [DONE] / finish_reason
-  if (!messageStopped) yield* closeAll();
+  if (!messageStopped) yield* finalize();
 
   // ---------- helpers (内嵌 generator，共享闭包状态) ----------
 
@@ -219,8 +222,7 @@ export async function* chatStreamToCanonical(
     };
   }
 
-  function* closeAll(finishReason?: string): Generator<CanonicalChunk> {
-    if (messageStopped) return;
+  function* closeBlocks(): Generator<CanonicalChunk> {
     // 关 thinking block
     if (thinkingBlockIndex !== null) {
       yield { type: "content_block_stop", index: thinkingBlockIndex };
@@ -238,10 +240,15 @@ export async function* chatStreamToCanonical(
       }
     }
     pendingTools.clear();
+  }
 
+  function* finalize(usage?: { inputTokens: number; outputTokens: number }): Generator<CanonicalChunk> {
+    if (messageStopped) return;
+    yield* closeBlocks();
     yield {
       type: "message_delta",
-      delta: { stop_reason: mapStopReason(finishReason) },
+      delta: { stop_reason: pendingStopReason ?? "end_turn" },
+      ...(usage ? { usage } : {}),
     };
     yield { type: "message_stop" };
     messageStopped = true;

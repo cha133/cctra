@@ -163,6 +163,18 @@ updatedAt = 1700000000000
 [[providers.stream-text-sub.models]]
 id = "x"
 
+[providers.stream-usage-sub]
+name = "stream-usage-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/stream-usage"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.stream-usage-sub.models]]
+id = "x"
+
 [providers.reasoning-sub]
 name = "reasoning-sub"
 endpoint = "${mockBaseUrl}"
@@ -511,6 +523,57 @@ describe("Streaming integration", () => {
       type: "message",
       status: "completed",
       content: [{ type: "output_text", text: "Hello world", annotations: [] }],
+    });
+  });
+
+  test("Anthropic client receives Chat usage after finish_reason", async () => {
+    const beforeCount = mockUpstream!.captured.length;
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "stream-usage-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+        stream: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const rawEvents = await collectSse(res.body!);
+    const events = rawEvents.map((raw) => {
+      const data = raw.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+      if (!data) throw new Error(`invalid Anthropic SSE event: ${raw}`);
+      return JSON.parse(data) as Record<string, unknown>;
+    });
+
+    const start = events.find((event) => event.type === "message_start") as {
+      message: Record<string, unknown>;
+    };
+    expect(start.message).toMatchObject({
+      id: "chatcmpl-usage",
+      type: "message",
+      role: "assistant",
+      model: "mock-usage",
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+
+    const deltas = events.filter((event) => event.type === "message_delta");
+    expect(deltas).toEqual([{
+      type: "message_delta",
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: { input_tokens: 11, output_tokens: 4 },
+    }]);
+    expect(events.filter((event) => event.type === "message_stop")).toHaveLength(1);
+
+    const upstreamRequest = mockUpstream!.captured
+      .slice(beforeCount)
+      .find((request) => request.path === "/chat/stream-usage");
+    expect(upstreamRequest).toBeDefined();
+    expect(upstreamRequest!.body).toMatchObject({
+      stream: true,
+      stream_options: { include_usage: true },
     });
   });
 

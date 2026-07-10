@@ -4,6 +4,7 @@
 // 启动一个 bun.serve()，按路径分发不同行为：
 //   POST /chat/stream-tool-call    模拟 OpenAI Chat 流式 tool_call（多 chunk arguments）
 //   POST /chat/stream-text         普通流式 text
+//   POST /chat/stream-usage        finish 后发送 usage-only chunk
 //   POST /chat/echo-body           回显请求体（验证 multimodal）
 //   POST /chat/slow                慢响应（每 N 秒一个 chunk）
 //   POST /chat/track-abort         记录请求是否被 abort
@@ -56,6 +57,7 @@ export function startMockUpstream(): MockUpstreamHandle {
 
       if (path === "/chat/stream-tool-call") return chatStreamToolCall();
       if (path === "/chat/stream-text") return chatStreamText();
+      if (path === "/chat/stream-usage") return chatStreamUsage();
       if (path === "/chat/echo-body") return jsonEcho(body);
       if (path === "/chat/slow") return chatSlowStream(req.signal);
       if (path === "/chat/track-abort") return chatSlowStream(req.signal);
@@ -142,6 +144,30 @@ function chatStreamText(): Response {
       controller.enqueue(encoder.encode(sseChunk({
         choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
       })));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+/** OpenAI include_usage 形态：finish chunk 后再发送 choices=[] 的 usage-only chunk。 */
+function chatStreamUsage(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunks = [
+        {
+          id: "chatcmpl-usage",
+          model: "mock-usage",
+          choices: [{ index: 0, delta: { role: "assistant", content: "Hello" }, finish_reason: null }],
+        },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+        { choices: [], usage: { prompt_tokens: 11, completion_tokens: 4, total_tokens: 15 } },
+      ];
+      for (const chunk of chunks) controller.enqueue(encoder.encode(sseChunk(chunk)));
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
     },

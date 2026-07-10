@@ -34,6 +34,11 @@ interface ChatUpstreamRequest {
 
 export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequest {
   const messages: ChatUpstreamRequest["messages"] = [];
+  const chatExtras = { ...(req.extras?.openaiChat ?? {}) };
+  const existingStreamOptions = isRecord(chatExtras.stream_options)
+    ? chatExtras.stream_options
+    : {};
+  delete chatExtras.stream_options;
 
   // 顶级 system → 第一条 system message
   const sysText = systemToString(req.system);
@@ -116,8 +121,15 @@ export function canonicalToChatUpstream(req: CanonicalRequest): ChatUpstreamRequ
     stream: req.stream,
     reasoning_effort: req.reasoning?.effort,
     // 顶层 extras spread（metadata / n / seed / response_format / parallel_tool_calls / stream_options 等）
-    ...(req.extras?.openaiChat ?? {}),
+    ...chatExtras,
+    ...(req.stream
+      ? { stream_options: { ...existingStreamOptions, include_usage: true } }
+      : {}),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function imageToDataUrl(src: ImageSource): string {

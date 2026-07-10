@@ -637,6 +637,133 @@ describe("Streaming reasoning separation", () => {
 });
 
 // ============================================================================
+// Chat streaming usage：finish_reason 后的 usage-only chunk 必须保留
+// ============================================================================
+
+describe("Chat streaming usage", () => {
+  function chatSseStream(payloads: unknown[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const payload of payloads) {
+          controller.enqueue(encoder.encode(
+            payload === "[DONE]" ? "data: [DONE]\n\n" : `data: ${JSON.stringify(payload)}\n\n`,
+          ));
+        }
+        controller.close();
+      },
+    });
+  }
+
+  test("preserves a usage-only chunk after finish_reason and stops exactly once", async () => {
+    const stream = chatSseStream([
+      { id: "chat_usage", model: "gpt-test", choices: [{ delta: { role: "assistant", content: "Hi" }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 11, completion_tokens: 4 } },
+      "[DONE]",
+    ]);
+    const chunks = [];
+    for await (const chunk of chatStreamToCanonical(stream)) chunks.push(chunk);
+
+    expect(chunks.slice(-2)).toEqual([
+      {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { inputTokens: 11, outputTokens: 4 },
+      },
+      { type: "message_stop" },
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === "message_stop")).toHaveLength(1);
+    expect(chunks.filter((chunk) => chunk.type === "message_delta")).toHaveLength(1);
+  });
+
+  test.each([
+    ["DONE", [
+      { choices: [{ delta: { role: "assistant", content: "Hi" }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+      "[DONE]",
+    ]],
+    ["natural EOF", [
+      { choices: [{ delta: { role: "assistant", content: "Hi" }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+    ]],
+  ] as const)("finishes without usage at %s", async (_name, payloads) => {
+    const chunks = [];
+    for await (const chunk of chatStreamToCanonical(chatSseStream([...payloads]))) chunks.push(chunk);
+    expect(chunks.slice(-2)).toEqual([
+      { type: "message_delta", delta: { stop_reason: "end_turn" } },
+      { type: "message_stop" },
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === "message_stop")).toHaveLength(1);
+  });
+});
+
+describe("AnthropicStreamFormatter wire shape", () => {
+  function parseData(raw: string): Record<string, unknown> {
+    const data = raw.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+    if (!data) throw new Error(`invalid Anthropic SSE event: ${raw}`);
+    return JSON.parse(data) as Record<string, unknown>;
+  }
+
+  test("maps canonical message_start to a complete Anthropic Message", () => {
+    const { AnthropicStreamFormatter } = require("../src/convert/streaming/outbound/format-anthropic");
+    const f = new AnthropicStreamFormatter();
+    const [raw] = f.format({
+      type: "message_start",
+      message: {
+        id: "msg_test",
+        model: "claude-test",
+        content: [],
+        stopReason: "end_turn",
+        usage: { inputTokens: 11, outputTokens: 0, cacheReadTokens: 2, cacheWriteTokens: 3 },
+      },
+    });
+
+    expect(raw).toStartWith("event: message_start\n");
+    expect(parseData(raw!)).toEqual({
+      type: "message_start",
+      message: {
+        id: "msg_test",
+        type: "message",
+        role: "assistant",
+        content: [],
+        model: "claude-test",
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: 11,
+          output_tokens: 0,
+          cache_read_input_tokens: 2,
+          cache_creation_input_tokens: 3,
+        },
+      },
+    });
+  });
+
+  test("maps message_delta usage to Anthropic snake_case without total_tokens", () => {
+    const { AnthropicStreamFormatter } = require("../src/convert/streaming/outbound/format-anthropic");
+    const f = new AnthropicStreamFormatter();
+    const [raw] = f.format({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: { inputTokens: 11, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 3 },
+    });
+
+    expect(parseData(raw!)).toEqual({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: {
+        input_tokens: 11,
+        output_tokens: 4,
+        cache_read_input_tokens: 2,
+        cache_creation_input_tokens: 3,
+      },
+    });
+    expect(raw).not.toContain("total_tokens");
+  });
+});
+
+// ============================================================================
 // Anthropic 路径保真：top-level / block-level / system extras + 未知 type 兜底 + stop_reason 映射
 // 上一轮审计发现的 5 个洞 + TODO.md "5min" 修复
 // ============================================================================
@@ -890,21 +1017,39 @@ describe("Chat passthrough fidelity", () => {
     expect(upstream.prediction).toEqual({ type: "content", content: "draft" });
   });
 
-  test("top-level newer fields (n / stream_options / logprobs) round-trip", () => {
+  test("top-level newer fields (n / stream_options / logprobs) round-trip for streaming requests", () => {
     const req = {
       model: "gpt-4",
       messages: [{ role: "user" as const, content: "hi" }],
+      stream: true,
       n: 3,
-      stream_options: { include_usage: true },
+      stream_options: { include_usage: false, custom_option: "keep" },
       logprobs: true,
       top_logprobs: 5,
     };
     const can = chatToCanonical(req as Parameters<typeof chatToCanonical>[0]);
     const upstream = canonicalToChatUpstream(can);
     expect(upstream.n).toBe(3);
-    expect(upstream.stream_options).toEqual({ include_usage: true });
+    expect(upstream.stream_options).toEqual({ include_usage: true, custom_option: "keep" });
     expect(upstream.logprobs).toBe(true);
     expect(upstream.top_logprobs).toBe(5);
+  });
+
+  test("requests usage only for streaming Chat upstream calls", () => {
+    const streaming = canonicalToChatUpstream({
+      model: "gpt-4",
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      stream: true,
+    });
+    expect(streaming.stream_options).toEqual({ include_usage: true });
+
+    const nonStreaming = canonicalToChatUpstream({
+      model: "gpt-4",
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      stream: false,
+      extras: { openaiChat: { stream_options: { include_usage: true, custom_option: "drop" } } },
+    });
+    expect(nonStreaming).not.toHaveProperty("stream_options");
   });
 
   test("assistant message-level extras (name / legacy function_call) round-trip", () => {
