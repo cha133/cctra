@@ -4,6 +4,7 @@ node_modules/
 # handover doc (out-of-git, for personal use)
 BOARD.md
 local-doc/
+.ai/
 
 # npm pack output
 *.tgz
