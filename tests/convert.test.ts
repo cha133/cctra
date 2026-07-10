@@ -397,6 +397,76 @@ describe("Streaming formatter error event + terminal suppression", () => {
     const stopOut = f.format({ type: "message_stop" });
     expect(stopOut).toEqual([]);
   });
+
+  test("ResponsesStreamFormatter: text block emits content_part.added + content_part.done + output_text.delta with item_id/content_index", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const f = new ResponsesStreamFormatter();
+
+    // message_start
+    const mStart = f.format({ type: "message_start", message: { id: "test-1", model: "m", content: [], stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } } });
+    expect(mStart).toHaveLength(2);
+    expect(mStart[0]).toMatch(/"type":"response\.created"/);
+    expect(mStart[1]).toMatch(/"type":"response\.in_progress"/);
+
+    // content_block_start (text) → output_item.added + content_part.added
+    const cbStart = f.format({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+    expect(cbStart).toHaveLength(2);
+    expect(cbStart[0]).toMatch(/"type":"response\.output_item\.added"/);
+    expect(cbStart[0]).toMatch(/"type":"message"/);
+    expect(cbStart[1]).toMatch(/"type":"response\.content_part\.added"/);
+    expect(cbStart[1]).toMatch(/"content_index":0/);
+    expect(cbStart[1]).toMatch(/"item_id":"msg_/);
+    expect(cbStart[1]).toMatch(/"type":"output_text"/);
+
+    // content_block_delta (text_delta) → output_text.delta with item_id + content_index
+    const d1 = f.format({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } });
+    expect(d1).toHaveLength(1);
+    expect(d1[0]).toMatch(/"type":"response\.output_text\.delta"/);
+    expect(d1[0]).toMatch(/"content_index":0/);
+    expect(d1[0]).toMatch(/"item_id":"msg_/);
+    expect(d1[0]).toMatch(/"delta":"Hello"/);
+
+    // content_block_stop (text) → content_part.done + output_item.done
+    const cbStop = f.format({ type: "content_block_stop", index: 0 });
+    expect(cbStop).toHaveLength(2);
+    expect(cbStop[0]).toMatch(/"type":"response\.content_part\.done"/);
+    expect(cbStop[0]).toMatch(/"content_index":0/);
+    expect(cbStop[0]).toMatch(/"item_id":"msg_/);
+    expect(cbStop[1]).toMatch(/"type":"response\.output_item\.done"/);
+    expect(cbStop[1]).toMatch(/"type":"message"/);
+
+    // message_delta + message_stop → response.completed + [DONE]
+    f.format({ type: "message_delta", delta: { stop_reason: "end_turn" } });
+    const mStop = f.format({ type: "message_stop" });
+    expect(mStop).toHaveLength(2);
+    expect(mStop[0]).toMatch(/"type":"response\.completed"/);
+    expect(mStop[1]).toBe("data: [DONE]\n\n");
+  });
+
+  test("ResponsesStreamFormatter: tool_use block does not emit content_part events", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const f = new ResponsesStreamFormatter();
+
+    f.format({ type: "message_start", message: { id: "test-2", model: "m", content: [], stopReason: "end_turn", usage: { inputTokens: 0, outputTokens: 0 } } });
+
+    // tool_use start → only output_item.added (NOT content_part.added)
+    const cbStart = f.format({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "call_1", name: "spawn_agent", input: {} } });
+    expect(cbStart).toHaveLength(1);
+    expect(cbStart[0]).toMatch(/"type":"response\.output_item\.added"/);
+    expect(cbStart[0]).toMatch(/"type":"function_call"/);
+
+    // arguments delta → function_call_arguments.delta
+    const delta = f.format({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{\"key\":" } });
+    expect(delta).toHaveLength(1);
+    expect(delta[0]).toMatch(/"type":"response\.function_call_arguments\.delta"/);
+
+    // tool_use stop → function_call_arguments.done + output_item.done, NO content_part
+    const cbStop = f.format({ type: "content_block_stop", index: 0 });
+    expect(cbStop).toHaveLength(2);
+    expect(cbStop[0]).toMatch(/"type":"response\.function_call_arguments\.done"/);
+    expect(cbStop[1]).toMatch(/"type":"response\.output_item\.done"/);
+    expect(cbStop.join(" ")).not.toMatch(/content_part/);
+  });
 });
 
 // ============================================================================

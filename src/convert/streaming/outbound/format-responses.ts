@@ -25,6 +25,10 @@ interface BlockMeta {
   name?: string;
   /** 文本块累积的内容 / function_call 累积的 arguments / thinking 累积的 summary */
   accumulated?: string;
+  /** 文本块的 content part index（始终为 0，每个 message 只有一个 output_text） */
+  contentIndex?: number;
+  /** message item 的 id，用于 output_text.delta 和 content_part 事件的 item_id */
+  itemId?: string;
 }
 
 export class ResponsesStreamFormatter {
@@ -76,12 +80,7 @@ export class ResponsesStreamFormatter {
           model: this.model,
           status: "in_progress",
           output: [],
-          ...(this.requestTools ? { tools: this.requestTools } : {}),
-          ...(this.requestInstructions ? { instructions: this.requestInstructions } : {}),
-          ...(this.requestTemperature !== undefined ? { temperature: this.requestTemperature } : {}),
-          ...(this.requestMaxTokens !== undefined ? { max_output_tokens: this.requestMaxTokens } : {}),
-          ...(this.requestTopP !== undefined ? { top_p: this.requestTopP } : {}),
-          ...(this.requestReasoning ? { reasoning: this.requestReasoning } : {}),
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
         };
         return [
           event("response.created", { response: respBase }),
@@ -92,17 +91,26 @@ export class ResponsesStreamFormatter {
       case "content_block_start": {
         const block = chunk.content_block;
         if (block.type === "text") {
-          this.blocks.set(chunk.index, { kind: "text" });
-          return [event("response.output_item.added", {
-            output_index: chunk.index,
-            item: {
-              type: "message",
-              id: `msg_${this.upstreamId || this.id}`,
-              status: "in_progress",
-              role: "assistant",
-              content: [],
-            },
-          })];
+          const itemId = `msg_${this.upstreamId || this.id}`;
+          this.blocks.set(chunk.index, { kind: "text", contentIndex: 0, itemId });
+          return [
+            event("response.output_item.added", {
+              output_index: chunk.index,
+              item: {
+                type: "message",
+                id: itemId,
+                status: "in_progress",
+                role: "assistant",
+                content: [],
+              },
+            }),
+            event("response.content_part.added", {
+              output_index: chunk.index,
+              content_index: 0,
+              item_id: itemId,
+              part: { type: "output_text", text: "" },
+            }),
+          ];
         }
         if (block.type === "tool_use") {
           this.blocks.set(chunk.index, { kind: "tool_use", id: block.id, name: block.name });
@@ -141,6 +149,8 @@ export class ResponsesStreamFormatter {
           if (meta) meta.accumulated = (meta.accumulated ?? "") + chunk.delta.text;
           return [event("response.output_text.delta", {
             output_index: chunk.index,
+            content_index: meta?.contentIndex ?? 0,
+            item_id: meta?.itemId ?? "",
             delta: chunk.delta.text,
           })];
         }
@@ -222,21 +232,29 @@ export class ResponsesStreamFormatter {
           ];
         }
         // text
+        const textItemId = meta?.itemId ?? `msg_${this.upstreamId || this.id}`;
         this.outputItems.push({
           type: "message",
-          id: `msg_${this.upstreamId || this.id}`,
+          id: textItemId,
           role: "assistant",
           content: [{ type: "output_text", text: meta.accumulated ?? "" }],
         });
-        return [event("response.output_item.done", {
-          output_index: chunk.index,
-          item: {
-            type: "message",
-            id: `msg_${this.upstreamId || this.id}`,
-            role: "assistant",
-            content: [{ type: "output_text", text: meta.accumulated ?? "" }],
-          },
-        })];
+        return [
+          event("response.content_part.done", {
+            output_index: chunk.index,
+            content_index: meta?.contentIndex ?? 0,
+            item_id: textItemId,
+          }),
+          event("response.output_item.done", {
+            output_index: chunk.index,
+            item: {
+              type: "message",
+              id: textItemId,
+              role: "assistant",
+              content: [{ type: "output_text", text: meta.accumulated ?? "" }],
+            },
+          }),
+        ];
       }
 
       case "message_delta": {
@@ -261,8 +279,6 @@ export class ResponsesStreamFormatter {
               model: this.model,
               status: "completed",
               output: this.outputItems,
-              ...(this.requestTools ? { tools: this.requestTools } : {}),
-              ...(this.requestInstructions ? { instructions: this.requestInstructions } : {}),
               ...(this.requestTemperature !== undefined ? { temperature: this.requestTemperature } : {}),
               ...(this.requestMaxTokens !== undefined ? { max_output_tokens: this.requestMaxTokens } : {}),
               ...(this.requestTopP !== undefined ? { top_p: this.requestTopP } : {}),

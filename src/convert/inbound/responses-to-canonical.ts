@@ -198,22 +198,45 @@ export function responsesToCanonical(req: ResponsesRequest): CanonicalRequest {
   }
 
   const tools: CanonicalTool[] | undefined = (r.tools ?? []).length > 0
-    ? (r.tools ?? []).flatMap((t) => {
-        // 展平 namespace 类型的工具（如 multi_agent_v1），里面的 function 子工具透出到顶层
-        if (t.type === "function") return [t];
-        if (t.type === "namespace" && Array.isArray(t.tools)) return t.tools as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
-        return [];
-      }).map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.parameters ?? { type: "object", properties: {} },
-      }))
+    ? (() => {
+        const flattened = (r.tools ?? []).flatMap((t) => {
+          // 展平 namespace 类型的工具（如 multi_agent_v1），里面的 function 子工具透出到顶层
+          if (t.type === "function") return [t];
+          if (t.type === "namespace" && Array.isArray(t.tools)) return t.tools as Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
+          return [];
+        }).map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.parameters ?? { type: "object", properties: {} },
+        }));
+
+        return flattened;
+      })()
     : undefined;
+
+  // 检测是否存在 namespace 工具（如 multi_agent_v1）
+  const hasNamespace = (r.tools ?? []).some((t) => t.type === "namespace");
+  // 如果存在 namespace 工具，将 instructions 中的 task(...) 调度语法替换为自然语言
+  // 引导模型使用展平后的 spawn_agent 等子工具，而非不存在的 task 函数
+  let system = r.instructions;
+  if (hasNamespace && typeof system === "string") {
+    // 替换 Step 2 中的完整 task() 调用为自然语言指引
+    // 例如：task(subagent_type="diagnose-reasoner", prompt="...") → 自然语言 + spawn_agent
+    system = system.replace(
+      /task\(subagent_type="([^"]+)",?\s*prompt="((?:[^"\\]|\\.)*)"\)/gs,
+      'Use the spawn_agent tool to spawn a sub-agent. Pass the full diagnostic context as the prompt: $2',
+    );
+    // 替换行内简写：task(subagent_type="X") → spawn_agent
+    system = system.replace(
+      /task\(subagent_type="([^"]+)"\)/g,
+      'spawn_agent',
+    );
+  }
 
   return {
     model: r.model ?? "",
     messages,
-    system: r.instructions,
+    system,
     tools: tools && tools.length > 0 ? tools : undefined,
     maxTokens: r.max_output_tokens,
     temperature: r.temperature,
