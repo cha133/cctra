@@ -10,6 +10,7 @@
 //   POST /chat/error-401/429/500   返回 4xx/5xx 错误（验证错误码透传）
 //   POST /chat/stream-error        返回 200 + SSE error event（验证流中错不发终止事件）
 //   POST /chat/stream-throw        返回会让 Chat 流解析器抛普通 Error 的合法 SSE
+//   POST /chat/stream-reasoning    返回 reasoning_content 后再返回正式 content
 //   POST /anthropic/messages/echo  回显 system + messages 数（cross-format 测试用）
 //   POST /v1/responses/echo        回显 instructions + input 数（cross-format 测试用）
 //   GET  /v1/models                返回固定模型列表
@@ -64,6 +65,7 @@ export function startMockUpstream(): MockUpstreamHandle {
       if (path === "/chat/error-500") return chatErrorResponse(500, "Internal server error");
       if (path === "/chat/stream-error") return chatStreamError();
       if (path === "/chat/stream-throw") return chatStreamThrow();
+      if (path === "/chat/stream-reasoning") return chatStreamReasoning();
       // Anthropic Messages 路径（cross-format 测试用：验 cctra 转发到 Anthropic-messages 上游）
       if (path === "/anthropic/messages/echo") return anthropicEcho(body);
       // OpenAI Responses 路径（验证 L.2 上游协议修复）
@@ -235,6 +237,28 @@ function chatStreamThrow(): Response {
       controller.enqueue(encoder.encode(sseChunk({
         choices: [{ index: 0, delta: { tool_calls: 42 }, finish_reason: null }],
       })));
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+  });
+}
+
+/** DeepSeek 风格：reasoning_content 与正式 content 分阶段输出。 */
+function chatStreamReasoning(): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunks = [
+        { id: "chat_reason", model: "deepseek", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { reasoning_content: "Plan " }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { reasoning_content: "carefully." }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: { content: "Final answer." }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+      ];
+      for (const chunk of chunks) controller.enqueue(encoder.encode(sseChunk(chunk)));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       controller.close();
     },
   });

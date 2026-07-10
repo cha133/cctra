@@ -5,7 +5,7 @@
 //   - 每个 tool_use Canonical block 在 OpenAI Chat 里对应一个 tool_calls[i] 槽位
 //   - 第一次见到 tool_use 时必须发完整 skeleton（id+name+type+空 arguments）
 //   - 后续 arguments 增量只发 {tool_calls:[{index,function:{arguments:partial}}]}
-//   - thinking/signature delta 在 OpenAI Chat 协议无对应 → 静默丢弃
+//   - thinking_delta 用兼容扩展字段 reasoning_content 输出，与正式 content 分离
 // ============================================================================
 
 import type { CanonicalChunk, StopReason } from "../../../canonical/types";
@@ -69,7 +69,10 @@ export class ChatStreamFormatter {
             }],
           })];
         }
-        // thinking_delta / signature_delta → OpenAI Chat 无对应，丢
+        if (chunk.delta.type === "thinking_delta") {
+          return [this.makeChunk({ reasoning_content: chunk.delta.thinking })];
+        }
+        // signature_delta → OpenAI Chat 无对应，丢
         return [];
       }
 

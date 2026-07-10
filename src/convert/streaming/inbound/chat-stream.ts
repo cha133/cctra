@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 // 处理：
 //   - delta.role 首次出现 → message_start
+//   - delta.reasoning_content → 独立 thinking block
 //   - delta.content 首次/累积 → content_block_start(text) + content_block_delta(text_delta)
 //   - delta.tool_calls[i] 多 chunk 拼接 → content_block_start(tool_use) + input_json_delta
 //   - finish_reason 非 null → 关掉所有打开的 block + message_delta + message_stop
@@ -25,6 +26,7 @@ interface ChatStreamChunk {
   choices?: Array<{
     delta?: {
       role?: string;
+      reasoning_content?: string | null;
       content?: string | null;
       tool_calls?: Array<{
         index: number;
@@ -44,6 +46,7 @@ export async function* chatStreamToCanonical(
   // ---------- 状态 ----------
   const pendingTools = new Map<number, PendingTool>();   // key = OpenAI tool_call index
   let nextBlockIndex = 0;
+  let thinkingBlockIndex: number | null = null;
   let textBlockIndex: number | null = null;              // 0 通常；null 表示还没开 text block
   let messageStarted = false;
   let messageStopped = false;
@@ -98,9 +101,37 @@ export async function* chatStreamToCanonical(
       yield* emitMessageStart();
     }
 
-    // (2) text 增量
+    // (2) reasoning 增量：独立 thinking block，不能混进正文 text
+    if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+      if (!messageStarted) yield* emitMessageStart();
+      // 极少数上游可能在正文后又发 reasoning；保持 block 生命周期严格串行。
+      if (textBlockIndex !== null) {
+        yield { type: "content_block_stop", index: textBlockIndex };
+        textBlockIndex = null;
+      }
+      if (thinkingBlockIndex === null) {
+        thinkingBlockIndex = nextBlockIndex++;
+        yield {
+          type: "content_block_start",
+          index: thinkingBlockIndex,
+          content_block: { type: "thinking", thinking: "" },
+        };
+      }
+      yield {
+        type: "content_block_delta",
+        index: thinkingBlockIndex,
+        delta: { type: "thinking_delta", thinking: delta.reasoning_content },
+      };
+    }
+
+    // (3) text 增量
     if (typeof delta?.content === "string" && delta.content.length > 0) {
       if (!messageStarted) yield* emitMessageStart();
+      // DeepSeek 等上游从 reasoning 切换到最终回答时，先关闭 thinking block。
+      if (thinkingBlockIndex !== null) {
+        yield { type: "content_block_stop", index: thinkingBlockIndex };
+        thinkingBlockIndex = null;
+      }
       if (textBlockIndex === null) {
         textBlockIndex = nextBlockIndex++;
         yield {
@@ -116,9 +147,13 @@ export async function* chatStreamToCanonical(
       };
     }
 
-    // (3) tool_calls 增量
+    // (4) tool_calls 增量
     if (delta?.tool_calls) {
       if (!messageStarted) yield* emitMessageStart();
+      if (thinkingBlockIndex !== null) {
+        yield { type: "content_block_stop", index: thinkingBlockIndex };
+        thinkingBlockIndex = null;
+      }
       for (const tc of delta.tool_calls) {
         let pending = pendingTools.get(tc.index);
         if (!pending) {
@@ -158,7 +193,7 @@ export async function* chatStreamToCanonical(
       }
     }
 
-    // (4) finish_reason → 关掉所有 block + message_delta + message_stop
+    // (5) finish_reason → 关掉所有 block + message_delta + message_stop
     if (choice.finish_reason) {
       yield* closeAll(choice.finish_reason);
     }
@@ -186,6 +221,11 @@ export async function* chatStreamToCanonical(
 
   function* closeAll(finishReason?: string): Generator<CanonicalChunk> {
     if (messageStopped) return;
+    // 关 thinking block
+    if (thinkingBlockIndex !== null) {
+      yield { type: "content_block_stop", index: thinkingBlockIndex };
+      thinkingBlockIndex = null;
+    }
     // 关 text block
     if (textBlockIndex !== null) {
       yield { type: "content_block_stop", index: textBlockIndex };

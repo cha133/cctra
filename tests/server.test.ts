@@ -163,6 +163,18 @@ updatedAt = 1700000000000
 [[providers.stream-text-sub.models]]
 id = "x"
 
+[providers.reasoning-sub]
+name = "reasoning-sub"
+endpoint = "${mockBaseUrl}"
+chatCompletionsPath = "/chat/stream-reasoning"
+token = "mock-token"
+apiFormat = "openai-chat"
+createdAt = 1700000000000
+updatedAt = 1700000000000
+
+[[providers.reasoning-sub.models]]
+id = "x"
+
 # Cross-format 集成测试 fixture（0.6.1）：覆盖 9/9 协议组合中缺的 4 个
 [providers.anthropic-to-chat-sub]
 name = "anthropic-to-chat-sub"
@@ -500,6 +512,87 @@ describe("Streaming integration", () => {
       status: "completed",
       content: [{ type: "output_text", text: "Hello world", annotations: [] }],
     });
+  });
+
+  test("reasoning_content remains separate for Chat client", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "reasoning-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+    const events = await collectSse(res.body!);
+    const deltas = events
+      .map((raw) => raw.split("\n").find((line) => line.startsWith("data: "))?.slice(6) ?? "")
+      .filter((data) => data && data !== "[DONE]")
+      .map((data) => JSON.parse(data) as { choices?: Array<{ delta?: { reasoning_content?: string; content?: string } }> })
+      .map((event) => event.choices?.[0]?.delta ?? {});
+
+    expect(deltas.map((delta) => delta.reasoning_content ?? "").join("")).toBe("Plan carefully.");
+    expect(deltas.map((delta) => delta.content ?? "").join("")).toBe("Final answer.");
+  });
+
+  test("reasoning_content becomes a dedicated Anthropic thinking block", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "reasoning-sub/x",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+        stream: true,
+      }),
+    });
+    const rawEvents = await collectSse(res.body!);
+    const events = rawEvents.map((raw) => {
+      const data = raw.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+      return data ? JSON.parse(data) as Record<string, unknown> : {};
+    });
+    const deltas = events.filter((event) => event.type === "content_block_delta") as Array<{
+      index: number;
+      delta: { type: string; thinking?: string; text?: string };
+    }>;
+
+    expect(deltas.filter(({ delta }) => delta.type === "thinking_delta").map(({ delta }) => delta.thinking).join(""))
+      .toBe("Plan carefully.");
+    expect(deltas.filter(({ delta }) => delta.type === "text_delta").map(({ delta }) => delta.text).join(""))
+      .toBe("Final answer.");
+    const thinkingStop = events.findIndex((event) => event.type === "content_block_stop" && event.index === 0);
+    const textStart = events.findIndex((event) => event.type === "content_block_start" && event.index === 1);
+    expect(thinkingStop).toBeGreaterThanOrEqual(0);
+    expect(textStart).toBeGreaterThan(thinkingStop);
+  });
+
+  test("reasoning_content becomes a dedicated Responses reasoning item", async () => {
+    const res = await fetch(`http://127.0.0.1:${serverHandle!.port}/v1/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "reasoning-sub/x", input: "hi", stream: true }),
+    });
+    const rawEvents = await collectSse(res.body!);
+    const events = rawEvents.map((raw) => {
+      const event = raw.split("\n").find((line) => line.startsWith("event: "))?.slice(7) ?? "";
+      const data = raw.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+      return { event, data: data ? JSON.parse(data) as Record<string, unknown> : {} };
+    });
+    const reasoning = events
+      .filter(({ event }) => event === "response.reasoning_summary_text.delta")
+      .map(({ data }) => data.delta as string)
+      .join("");
+    const answer = events
+      .filter(({ event }) => event === "response.output_text.delta")
+      .map(({ data }) => data.delta as string)
+      .join("");
+    expect(reasoning).toBe("Plan carefully.");
+    expect(answer).toBe("Final answer.");
+
+    const completed = events.find(({ event }) => event === "response.completed")!.data.response as {
+      output: Array<{ type: string }>;
+    };
+    expect(completed.output.map((item) => item.type)).toEqual(["reasoning", "message"]);
   });
 
   test("client abort propagates to upstream fetch", async () => {

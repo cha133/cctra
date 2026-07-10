@@ -17,6 +17,7 @@ import { canonicalToAnthropicResponse } from "../src/convert/outbound/canonical-
 import { canonicalToResponsesResponse } from "../src/convert/outbound/canonical-to-responses";
 import { parseChatUpstreamResponse } from "../src/server/chat-parser";
 import { parseAnthropicUpstreamResponse } from "../src/server/anthropic-parser";
+import { chatStreamToCanonical } from "../src/convert/streaming/inbound/chat-stream";
 
 describe("Chat → Canonical", () => {
   test("basic user message", () => {
@@ -526,6 +527,112 @@ describe("ResponsesStreamFormatter success lifecycle", () => {
       name: "lookup",
       arguments: '{"q":"x"}',
     });
+  });
+});
+
+// ============================================================================
+// Chat reasoning_content：独立 canonical thinking block，绝不污染正文
+// ============================================================================
+
+describe("Streaming reasoning separation", () => {
+  function chatSseStream(payloads: unknown[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const payload of payloads) {
+          controller.enqueue(encoder.encode(
+            payload === "[DONE]" ? "data: [DONE]\n\n" : `data: ${JSON.stringify(payload)}\n\n`,
+          ));
+        }
+        controller.close();
+      },
+    });
+  }
+
+  test("Chat parser closes thinking before opening answer text", async () => {
+    const stream = chatSseStream([
+      { id: "chat_reason", model: "deepseek", choices: [{ delta: { role: "assistant" }, finish_reason: null }] },
+      { choices: [{ delta: { reasoning_content: "Plan " }, finish_reason: null }] },
+      { choices: [{ delta: { reasoning_content: "carefully." }, finish_reason: null }] },
+      { choices: [{ delta: { content: "Final answer." }, finish_reason: null }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+      "[DONE]",
+    ]);
+    const chunks = [];
+    for await (const chunk of chatStreamToCanonical(stream)) chunks.push(chunk);
+
+    expect(chunks).toEqual([
+      expect.objectContaining({ type: "message_start" }),
+      { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Plan " } },
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "carefully." } },
+      { type: "content_block_stop", index: 0 },
+      { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Final answer." } },
+      { type: "content_block_stop", index: 1 },
+      { type: "message_delta", delta: { stop_reason: "end_turn" } },
+      { type: "message_stop" },
+    ]);
+    let text = "";
+    for (const chunk of chunks) {
+      if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+        text += chunk.delta.text;
+      }
+    }
+    expect(text).toBe("Final answer.");
+  });
+
+  test("Chat formatter emits thinking as reasoning_content, not content", () => {
+    const { ChatStreamFormatter } = require("../src/convert/streaming/outbound/format-chat");
+    const f = new ChatStreamFormatter();
+    f.format({
+      type: "message_start",
+      message: {
+        id: "chat_reason",
+        model: "deepseek",
+        content: [],
+        stopReason: "end_turn",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      },
+    });
+    const reasoning = f.format({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "Plan carefully." },
+    });
+    const answer = f.format({
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "text_delta", text: "Final answer." },
+    });
+    const reasoningDelta = JSON.parse(reasoning[0]!.slice(6)) as {
+      choices: Array<{ delta: Record<string, unknown> }>;
+    };
+    const answerDelta = JSON.parse(answer[0]!.slice(6)) as {
+      choices: Array<{ delta: Record<string, unknown> }>;
+    };
+
+    expect(reasoningDelta.choices[0]!.delta).toEqual({ reasoning_content: "Plan carefully." });
+    expect(answerDelta.choices[0]!.delta).toEqual({ content: "Final answer." });
+  });
+
+  test("Responses and Anthropic formatters preserve thinking as dedicated events", () => {
+    const { ResponsesStreamFormatter } = require("../src/convert/streaming/outbound/format-responses");
+    const { AnthropicStreamFormatter } = require("../src/convert/streaming/outbound/format-anthropic");
+    const responses = new ResponsesStreamFormatter();
+    const anthropic = new AnthropicStreamFormatter();
+    const start = { type: "content_block_start" as const, index: 0, content_block: { type: "thinking" as const, thinking: "" } };
+    const delta = { type: "content_block_delta" as const, index: 0, delta: { type: "thinking_delta" as const, thinking: "Plan." } };
+
+    const responseEvents = [...responses.format(start), ...responses.format(delta)].join("");
+    expect(responseEvents).toContain("response.reasoning_summary_part.added");
+    expect(responseEvents).toContain("response.reasoning_summary_text.delta");
+    expect(responseEvents).not.toContain("response.output_text.delta");
+
+    const anthropicEvents = [...anthropic.format(start), ...anthropic.format(delta)].join("");
+    expect(anthropicEvents).toContain('"content_block":{"type":"thinking","thinking":""}');
+    expect(anthropicEvents).toContain('"delta":{"type":"thinking_delta","thinking":"Plan."}');
+    expect(anthropicEvents).not.toContain("text_delta");
   });
 });
 
