@@ -48,13 +48,19 @@ export async function* chatStreamToCanonical(
   let textBlockIndex: number | null = null;              // 0 通常；null 表示还没开 text block
   let messageStarted = false;
   let messageStopped = false;
+  /** closeAll 已 yield content_block_stop + message_delta，但 message_stop 暂缓（等待可能的 usage-only chunk） */
+  let pendingStop = false;
   let upstreamModel = "";
   let upstreamId = "";
 
   // ---------- 主循环 ----------
   for await (const ev of parseSseStream(rawStream)) {
     if (ev.data === "[DONE]") {
-      if (!messageStopped) {
+      if (pendingStop) {
+        yield { type: "message_stop" };
+        messageStopped = true;
+        pendingStop = false;
+      } else if (!messageStopped) {
         yield* closeAll();
       }
       continue;
@@ -78,7 +84,7 @@ export async function* chatStreamToCanonical(
 
     const choice = parsed.choices?.[0];
     if (!choice) {
-      // 可能是 usage-only chunk
+      // 处理 usage-only chunk：可能在 finish_reason 之后到来（OpenAI 流式结尾）
       if (parsed.usage && messageStarted && !messageStopped) {
         yield {
           type: "message_delta",
@@ -88,6 +94,12 @@ export async function* chatStreamToCanonical(
             outputTokens: parsed.usage.completion_tokens ?? 0,
           },
         };
+        // closeAll 已推迟 message_stop，此时收尾
+        if (pendingStop) {
+          yield { type: "message_stop" };
+          messageStopped = true;
+          pendingStop = false;
+        }
       }
       continue;
     }
@@ -180,13 +192,22 @@ export async function* chatStreamToCanonical(
     }
 
     // (4) finish_reason → 关掉所有 block + message_delta + message_stop
+    // 同时携带当前 chunk 的 usage（如果上游在同一个 chunk 里返回 usage + finish_reason）
     if (choice.finish_reason) {
-      yield* closeAll(choice.finish_reason);
+      yield* closeAll(choice.finish_reason, parsed.usage);
     }
   }
 
   // 流自然结束但没收到 [DONE] / finish_reason
-  if (!messageStopped) yield* closeAll();
+  if (!messageStopped) {
+    if (pendingStop) {
+      yield { type: "message_stop" };
+      messageStopped = true;
+      pendingStop = false;
+    } else {
+      yield* closeAll();
+    }
+  }
 
   // ---------- helpers (内嵌 generator，共享闭包状态) ----------
 
@@ -205,8 +226,8 @@ export async function* chatStreamToCanonical(
     };
   }
 
-  function* closeAll(finishReason?: string): Generator<CanonicalChunk> {
-    if (messageStopped) return;
+  function* closeAll(finishReason?: string, usage?: ChatStreamChunk["usage"]): Generator<CanonicalChunk> {
+    if (messageStopped || pendingStop) return;
     // 关 text block
     if (textBlockIndex !== null) {
       yield { type: "content_block_stop", index: textBlockIndex };
@@ -223,9 +244,10 @@ export async function* chatStreamToCanonical(
     yield {
       type: "message_delta",
       delta: { stop_reason: mapStopReason(finishReason) },
+      ...(usage ? { usage: { inputTokens: usage.prompt_tokens ?? 0, outputTokens: usage.completion_tokens ?? 0 } } : {}),
     };
-    yield { type: "message_stop" };
-    messageStopped = true;
+    // 推迟 message_stop：让主循环先处理可能的 usage-only chunk，再由 [DONE] 或 usage 处理器收尾
+    pendingStop = true;
   }
 }
 
